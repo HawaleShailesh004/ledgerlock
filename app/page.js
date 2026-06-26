@@ -8,6 +8,12 @@ import VerificationBanner from "@/components/verification-banner";
 import ChainTimeline from "@/components/chain-timeline";
 import AppendModal from "@/components/append-modal";
 import Toast from "@/components/toast";
+import {
+  buildSeed,
+  appendDemo,
+  verifyDemo,
+  tamperDemo,
+} from "@/lib/demo-ledger";
 
 const FALLBACK_TENANTS = [
   { id: "acme", name: "Acme Health" },
@@ -30,8 +36,12 @@ export default function Page() {
   const [toast, setToast] = useState("");
   const [flashId, setFlashId] = useState(0);
   const [reduced, setReduced] = useState(false);
+  const [demo, setDemo] = useState(false);
 
   const toastTimer = useRef(null);
+  // Demo ledger lives in memory, oldest-first, keyed by tenant id.
+  const demoStore = useRef({});
+  const demoActive = useRef(false);
 
   // prefers-reduced-motion
   useEffect(() => {
@@ -58,21 +68,50 @@ export default function Page() {
     };
   }, []);
 
-  const loadEvents = useCallback(async (tenantId) => {
-    setStatus("idle");
-    setBrokenSeq(null);
-    setRipple(false);
-    try {
-      const res = await fetch(`/api/events?tenantId=${tenantId}`);
-      const data = await res.json();
-      const items = Array.isArray(data?.items) ? data.items : [];
-      // API returns oldest-first; show newest-first.
-      items.sort((a, b) => b.seq - a.seq);
-      setEvents(items);
-    } catch {
-      setEvents([]);
-    }
+  // Publish the in-memory demo chain (stored oldest-first) to the view (newest-first).
+  const publishDemo = useCallback((tenantId) => {
+    const chain = demoStore.current[tenantId] || [];
+    setEvents([...chain].sort((a, b) => b.seq - a.seq));
   }, []);
+
+  // Lazily seed and activate the demo ledger for a tenant.
+  const enterDemo = useCallback(
+    async (tenantId) => {
+      demoActive.current = true;
+      setDemo(true);
+      if (!demoStore.current[tenantId]) {
+        demoStore.current[tenantId] = await buildSeed(tenantId);
+      }
+      publishDemo(tenantId);
+    },
+    [publishDemo]
+  );
+
+  const loadEvents = useCallback(
+    async (tenantId) => {
+      setStatus("idle");
+      setBrokenSeq(null);
+      setRipple(false);
+      try {
+        const res = await fetch(`/api/events?tenantId=${tenantId}`);
+        const data = await res.json();
+        const items = Array.isArray(data?.items) ? data.items : [];
+        if (!res.ok || items.length === 0) {
+          // Backend unreachable or empty — fall back to the demo ledger.
+          await enterDemo(tenantId);
+          return;
+        }
+        demoActive.current = false;
+        setDemo(false);
+        // API returns oldest-first; show newest-first.
+        items.sort((a, b) => b.seq - a.seq);
+        setEvents(items);
+      } catch {
+        await enterDemo(tenantId);
+      }
+    },
+    [enterDemo]
+  );
 
   // Reload on tenant change
   useEffect(() => {
@@ -102,12 +141,16 @@ export default function Page() {
     setBrokenSeq(null);
     setRipple(false);
     try {
+      const verifyReq = demoActive.current
+        ? verifyDemo(demoStore.current[tenant.id] || [])
+        : fetch("/api/verify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tenantId: tenant.id }),
+          }).then((r) => r.json());
+
       const [res] = await Promise.all([
-        fetch("/api/verify", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tenantId: tenant.id }),
-        }).then((r) => r.json()),
+        verifyReq,
         delay(reduced ? 150 : 1150), // let the scan-bar walk the chain
       ]);
 
@@ -132,6 +175,22 @@ export default function Page() {
 
   const handleAppend = useCallback(
     async ({ actor, action, flagged }) => {
+      if (demoActive.current) {
+        const { events: next, seq } = await appendDemo(
+          tenant.id,
+          demoStore.current[tenant.id] || [],
+          { actor, action, flagged }
+        );
+        demoStore.current[tenant.id] = next;
+        setStatus("idle");
+        setBrokenSeq(null);
+        setNewSeq(seq);
+        publishDemo(tenant.id);
+        showToast(`Event #${seq} appended`);
+        setTimeout(() => setNewSeq(null), 1200);
+        return;
+      }
+
       const res = await fetch("/api/events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -155,8 +214,20 @@ export default function Page() {
       showToast(`Event #${data.seq} appended`);
       setTimeout(() => setNewSeq(null), 1200);
     },
-    [tenant, loadEvents, showToast]
+    [tenant, loadEvents, showToast, publishDemo]
   );
+
+  // Demo-only: silently corrupt a mid-chain record so "Verify Chain" surfaces it.
+  const handleTamper = useCallback(() => {
+    if (!demoActive.current) return;
+    const { events: next } = tamperDemo(demoStore.current[tenant.id] || []);
+    demoStore.current[tenant.id] = next;
+    setStatus("idle");
+    setBrokenSeq(null);
+    setRipple(false);
+    publishDemo(tenant.id);
+    showToast("Record silently altered — run Verify Chain");
+  }, [tenant, publishDemo, showToast]);
 
   const merkleRoot = events[0]?.hash || "GENESIS";
 
@@ -177,6 +248,8 @@ export default function Page() {
             onAppend={() => setAppendOpen(true)}
             onVerify={handleVerify}
             verifying={status === "verifying"}
+            demo={demo}
+            onTamper={handleTamper}
           />
 
           <div className="mt-6">
