@@ -288,6 +288,23 @@ export function computeHash(eventWithoutHash, prevHash) {
     .update(canonical(eventWithoutHash) + prevHash)
     .digest("hex");
 }
+
+// Merkle root over an ordered list of leaf hashes.
+// Used by the verifier (live root) and mirrored in the Lambda (WORM root) — the two
+// copies must stay byte-identical or the live-vs-WORM cross-check will falsely diverge.
+export function merkleRoot(hashes) {
+  if (hashes.length === 0) return crypto.createHash("sha256").update("EMPTY").digest("hex");
+  let level = hashes;
+  while (level.length > 1) {
+    const next = [];
+    for (let i = 0; i < level.length; i += 2) {
+      const a = level[i], b = level[i + 1] ?? level[i]; // duplicate last if odd
+      next.push(crypto.createHash("sha256").update(a + b).digest("hex"));
+    }
+    level = next;
+  }
+  return level[0];
+}
 ```
 
 **3.3 — A reusable DynamoDB client** — create `lib/ddb.js`
@@ -402,7 +419,9 @@ A function that walks a tenant's entire chain, recomputes every hash, and return
 ```js
 import { QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb, TABLE } from "./ddb.js";
-import { computeHash } from "./chain.js";
+import { computeHash, merkleRoot } from "./chain.js";
+
+const CHECKPOINT_EVERY = 10;   // must match the Lambda cadence
 
 export async function verifyChain(tenantId) {
   const res = await ddb.send(new QueryCommand({
@@ -427,10 +446,18 @@ export async function verifyChain(tenantId) {
     prevHash = hash;                                  // advance using stored hash
     expectedSeq = it.seq + 1;
   }
-  return { intact: breaks.length === 0, count: res.Items.length, breaks };
+
+  // Live Merkle root at the latest checkpoint boundary, over CURRENT stored hashes.
+  // Compared by the UI against the immutable WORM root from S3 (/api/checkpoint).
+  const n = res.Items.length;
+  const boundary = Math.floor(n / CHECKPOINT_EVERY) * CHECKPOINT_EVERY;
+  const liveRootAtBoundary =
+    boundary > 0 ? merkleRoot(res.Items.slice(0, boundary).map(i => i.hash)) : null;
+
+  return { intact: breaks.length === 0, count: n, breaks, boundary, liveRootAtBoundary };
 }
 ```
-The `seqOk` check is what would catch a *fork* (two events with the same seq) or a *deletion gap*, in addition to hash tampering — the three checks together cover every way the chain could be corrupted.
+The `seqOk` check catches a *fork* (two events with the same seq) or a *deletion gap*, in addition to hash tampering. `liveRootAtBoundary` is the live fingerprint of the first `boundary` events (e.g. first 30) — the UI compares it to the WORM checkpoint's root for the same 30. They match when untouched; a tamper inside that prefix makes them diverge, and the WORM root can't be changed to match (Object Lock).
 
 **4.2 — Tamper test** — create `scripts/test-verify.mjs`
 ```js
@@ -498,6 +525,9 @@ const TABLE = "LedgerLock";
 const BUCKET = process.env.WORM_BUCKET;
 const CHECKPOINT_EVERY = 10;
 
+// ⚠ keep this byte-identical to merkleRoot() in lib/chain.js, or the live-vs-WORM
+// cross-check in the UI will always falsely diverge. (Lambda is a separate deploy
+// package, so it can't import from @/lib — hence the duplicated copy.)
 function merkleRoot(hashes) {
   if (hashes.length === 0) return crypto.createHash("sha256").update("EMPTY").digest("hex");
   let level = hashes;
@@ -692,87 +722,169 @@ export async function POST(req) {
   return Response.json(await verifyChain(tenantId));
 }
 ```
+`app/api/checkpoint/route.js` (reads the immutable WORM root from S3 for the cross-check):
+```js
+import { S3Client, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
+
+const s3 = new S3Client({
+  region: "ap-south-1",
+  credentials: {
+    accessKeyId: process.env.LL_ACCESS_KEY_ID,
+    secretAccessKey: process.env.LL_SECRET_ACCESS_KEY,
+  },
+});
+const BUCKET = process.env.WORM_BUCKET;
+
+export async function GET(req) {
+  const tenantId = new URL(req.url).searchParams.get("tenantId");
+  const prefix = `TENANT_${tenantId}/`;
+  const list = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix }));
+  const keys = (list.Contents || []).map(o => o.Key).filter(k => k.endsWith(".json"))
+    .sort((a, b) => Number(b.match(/checkpoint-(\d+)\.json/)?.[1] || 0)
+                  - Number(a.match(/checkpoint-(\d+)\.json/)?.[1] || 0));
+  if (keys.length === 0) return Response.json({ checkpoint: null });
+  const obj = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: keys[0] }));
+  const body = await obj.Body.transformToString();
+  return Response.json({ checkpoint: JSON.parse(body) });
+}
+```
+You'll need the AWS S3 SDK: `npm install @aws-sdk/client-s3`. And the app user needs **read-only** S3 on the WORM bucket — go back to Phase 2 and add this statement to `iam/append-policy.json`, then re-run the policy update (`aws iam create-policy-version` or recreate). Read only — the app must never be able to write/delete the WORM layer:
+```json
+{
+  "Sid": "ReadOnlyWormCheckpoints",
+  "Effect": "Allow",
+  "Action": ["s3:GetObject", "s3:ListBucket"],
+  "Resource": [
+    "arn:aws:s3:::ledgerlock-worm-<same-name>",
+    "arn:aws:s3:::ledgerlock-worm-<same-name>/*"
+  ]
+}
+```
 
 **6.3 — Local run**
 Create `.env.local` (git-ignored):
 ```
 LL_ACCESS_KEY_ID=<ledgerlock-app key>
 LL_SECRET_ACCESS_KEY=<ledgerlock-app secret>
+WORM_BUCKET=ledgerlock-worm-<same-name>
 ```
 ```bash
 npm run dev
-# test: curl -X POST localhost:3000/api/verify -H "content-type: application/json" -d '{"tenantId":"acme"}'
+# test verify:     curl -X POST localhost:3000/api/verify -H "content-type: application/json" -d '{"tenantId":"acme"}'
+# test checkpoint: curl "localhost:3000/api/checkpoint?tenantId=acme"
 ```
 
 **6.4 — Push to GitHub + deploy on Vercel**
 ```bash
 git add . && git commit -m "LedgerLock backend" && git push
 ```
-- Vercel → Add New Project → import the repo → before deploying, open **Environment Variables** and add `LL_ACCESS_KEY_ID` and `LL_SECRET_ACCESS_KEY` (the app keys). Deploy.
-- You get a URL like `https://ledgerlock.vercel.app`. Test: `curl -X POST https://<your-url>/api/verify -d '{"tenantId":"acme"}' -H "content-type: application/json"`.
+- Vercel → Add New Project → import the repo → before deploying, open **Environment Variables** and add `LL_ACCESS_KEY_ID`, `LL_SECRET_ACCESS_KEY` (the app keys), and `WORM_BUCKET` (your bucket name). Deploy.
+- You get a URL like `https://ledgerlock.vercel.app`. Test: `curl -X POST https://<your-url>/api/verify -d '{"tenantId":"acme"}' -H "content-type: application/json"` and `curl "https://<your-url>/api/checkpoint?tenantId=acme"`.
 
 ### Checklist
-- [ ] `npm run dev` works locally and `/api/verify` returns chain status.
-- [ ] App uses the **least-privilege** keys (not admin) — confirm a delete path doesn't even exist in code.
-- [ ] Live Vercel URL responds to `/api/events` (GET) and `/api/verify` (POST).
-- [ ] Env vars are in Vercel settings, not in the repo.
+- [ ] `npm run dev` works locally and `/api/verify` returns chain status **plus** `liveRootAtBoundary` + `boundary`.
+- [ ] `/api/checkpoint?tenantId=...` returns the latest WORM checkpoint JSON (with `merkleRoot`).
+- [ ] When the chain is intact, `verify.liveRootAtBoundary === checkpoint.merkleRoot` for the same boundary.
+- [ ] App uses the **least-privilege** keys (not admin); it can read S3 but has no write/delete on the bucket and no Update/Delete on DynamoDB.
+- [ ] Live Vercel URL responds to `/api/events` (GET), `/api/verify` (POST), `/api/checkpoint` (GET).
+- [ ] `LL_ACCESS_KEY_ID`, `LL_SECRET_ACCESS_KEY`, `WORM_BUCKET` are in Vercel settings, not in the repo.
 
 ### Common mistakes
 - Hardcoding keys in code → leaked on GitHub. Always env vars.
 - Using admin keys on Vercel — defeats the thesis and is unsafe. Use `ledgerlock-app`.
-- Region mismatch between code (`ap-south-1`) and table. Keep aligned.
+- Region mismatch between code (`ap-south-1`) and table/bucket. Keep aligned.
+- Giving the app S3 write/delete "to make it work." It needs **read-only** on the WORM bucket; write access would let the app weaken the immutability layer it's supposed to prove.
+- The verifier's `merkleRoot` and the Lambda's `merkleRoot` drifting apart → the cross-check falsely diverges on a clean chain. Keep them byte-identical.
 
 ---
 
 # PHASE 7 — The v0 frontend
 
 ### Goal
-A premium, animated enterprise-security dashboard that visualizes the hash chain as a *living* chain — links draw in as events append, and on a tamper the chain visibly fractures and cascades red down the timeline. The animation isn't decoration; every motion dramatizes the data model, which is exactly the "design in deliberate relation to the backend" the rubric rewards. Keep it serious (these are database engineers, not a consumer crowd) but make the tamper moment cinematic.
+Production-grade software that looks like a **precision instrument**, not a demo. The design language is the database itself made legible: the data (sequence numbers, hashes, the chain) is the hero and is rendered with obvious care; the chrome (nav, labels, buttons) recedes to hairlines and muted text. No landing page, no "how it works," no marketing — you open straight into the working tool, the way a real auditor's console would. Motion is mechanical and exact: things **lock** into place, nothing bounces. Color is almost entirely absent until it carries meaning.
+
+### The design system (commit to this — it's the whole identity)
+
+**Concept word: INSTRUMENT.** The reference points are a Bloomberg terminal, an oscilloscope, a flight instrument — screens that feel serious because they are *exact*, dense, and data-forward, not because they are decorated. Every choice below serves "this is a precision tool a professional trusts."
+
+**Color — a warm-black instrument palette, not stock zinc:**
+- Canvas: `#0B0C0E` (a near-black with a faint cool undertone — deliberately *not* Tailwind `zinc-950`, which every v0 demo uses). Panels one step up: `#111317`. Raised surfaces: `#16181D`.
+- Hairlines and dividers: `#23262C` (1px, used a lot — instruments are full of fine rules).
+- Text: primary `#E7E9EC` (soft white, never pure `#FFF`), secondary `#8A9099`, tertiary/labels `#5A6069` (small uppercase tracked labels).
+- **Verified accent — desaturated steel-cyan, not emerald:** `#3FB6C4` used sparingly (a verified tick, an active row indicator). It reads as "instrument/infrastructure," not "success toast." Keep it low-saturation and low-coverage.
+- **Tamper signal — one high-saturation alarm color, reserved 100% for tampering:** `#FF5A3C` (a hot signal-orange-red, more alarming and more specific than generic error-red). It must appear *nowhere* else in the entire UI, so when it shows up the eye knows instantly something is wrong.
+- Action tags use *muted* dot indicators, not bright fills: PHI_READ `#6B8AFD`, RECORD_UPDATE `#C9A24B`, EXPORT `#9B7BD4`, BREAK_THE_GLASS uses the tamper signal `#FF5A3C` as a hollow ring. All low-key — they're metadata, not decoration.
+
+**Typography — the data is the hero, and nothing is Inter/JetBrains-default:**
+- UI face: a tight, authoritative grotesque — use **Geist** or **Söhne**-style; if only Google Fonts are available in v0, use **`Geist`** or fall back to **`Hanken Grotesk`** / **`Archivo`** (avoid plain Inter — it's the ecosystem default and reads as "ungesigned"). Set labels in small caps, ~11px, letter-spacing +0.08em, in the tertiary text color.
+- Mono (the hero typeface): hashes, sequence numbers, timestamps, Merkle roots all in a *characterful* mono — **`IBM Plex Mono`** or **`Space Mono`** (both on Google Fonts; avoid JetBrains Mono, the default). The mono data should be **larger and brighter than the surrounding UI labels** — invert the usual hierarchy so the fingerprints dominate. A hash isn't a caption here; it's the subject.
+- The seq number is set large in mono as the visual anchor of each event row.
+
+**Layout — dense and instrument-like, the chain as the structural spine:**
+- No generic 260px-sidebar-+-content shell. Instead a **three-zone instrument layout**: a slim left rail (~64px, icon-only, no labels — pure tool chrome), a central **ledger column** that is the dominant element (the chain runs down it as the literal backbone of the screen), and a right **inspector panel** (~320px) that shows the full detail of the selected event (every attribute, full untruncated hashes, the recompute view).
+- Density over whitespace: tight, accountable spacing, fine hairline rules between rows, a persistent top status strip and a persistent bottom "telemetry" bar (event count, last checkpoint seq, verify status) — like a real terminal has a status line. This density is the signal that says "real tool," not "marketing site."
+- A small monospace tenant selector lives in the top strip (not a big sidebar dropdown) — `tenant: acme-health ▾` in mono, understated.
+
+**Motion — mechanical, exact, cryptographic. Nothing bounces:**
+- Transitions are crisp and fast (120–180ms), linear or sharp ease-out, **no spring overshoot**. The feeling is a tumbler clicking, a relay switching — deterministic, not playful.
+- A hash "locks in" by snapping into alignment, not fading softly.
+- Use `framer-motion` but with tight, non-springy transitions (`ease: [0.2, 0, 0, 1]`, short durations).
 
 ### The detailed v0 prompt (paste this into v0.dev)
 
-> Build a single-page enterprise compliance dashboard called **LedgerLock** in Next.js + Tailwind, using **Framer Motion** for animation. Aesthetic: serious security-grade fintech — background `zinc-950` with a very subtle radial vignette, card surfaces `zinc-900/80` with `zinc-800` hairline borders and soft shadows, off-white text, Inter for UI and JetBrains Mono for hashes. One accent only: **emerald-400** for verified/secure states. **Red-500** is reserved *exclusively* for tamper states so it feels rare and alarming when it appears. Premium, calm, high-trust — think Stripe-meets-security-console, never a colorful consumer app. Generous whitespace, restrained motion.
+> Build a production-grade, single-screen audit-ledger console called **LedgerLock** in Next.js + Tailwind with **Framer Motion**. This is a working internal tool for compliance officers — open directly into the tool, NO landing page, NO hero, NO "how it works", NO marketing copy. The design language is "precision instrument" — think Bloomberg terminal / oscilloscope: dense, exact, data-forward, serious. The data (sequence numbers, SHA-256 hashes, Merkle roots) is the visual hero; chrome recedes.
 >
-> **Layout:** fixed 260px left sidebar + main content area.
+> **Exact palette (use these hex values, not Tailwind defaults):** canvas `#0B0C0E`; panels `#111317`; raised `#16181D`; hairlines `#23262C` (1px, used liberally); text primary `#E7E9EC`, secondary `#8A9099`, label `#5A6069` (small uppercase, letter-spacing 0.08em). Verified/active accent: desaturated steel-cyan `#3FB6C4`, used sparingly. **Tamper signal `#FF5A3C` (hot orange-red) is reserved EXCLUSIVELY for tamper states and must appear nowhere else in the UI.** Action dot colors, all muted: PHI_READ `#6B8AFD`, RECORD_UPDATE `#C9A24B`, EXPORT `#9B7BD4`, BREAK_THE_GLASS = hollow `#FF5A3C` ring.
 >
-> **Sidebar:** LedgerLock wordmark with a shield icon that emits a subtle emerald pulse every few seconds (signals "live monitoring"). A "TENANT" label + dropdown: "Acme Health", "Northwind Bank", "Globex Insurance". A nav list with one active item "Audit Ledger" (emerald left-border when active). At the bottom, a "WORM Checkpoint" status card: a green dot, "S3 Object Lock · Synced", and a tiny JetBrains Mono Merkle-root snippet like `root: 7c2f…a91d` that fades-updates when a new checkpoint lands.
+> **Typography:** UI font `Geist` (or `Hanken Grotesk` if unavailable) — NOT Inter. Mono font `IBM Plex Mono` (or `Space Mono`) for ALL hashes, seq numbers, timestamps, roots — NOT JetBrains Mono. Critically: the mono data should be LARGER and BRIGHTER than the UI labels around it — invert the usual hierarchy so the fingerprints and sequence numbers dominate each row. Labels are small (11px), uppercase, tracked, in `#5A6069`.
 >
-> **Top bar:** an `<h1>` "Audit Ledger" with a subtitle "{tenantName} · {n} events". On the right, a secondary "Append Event" button and a primary emerald "Verify Chain" button with a small lock icon. Buttons have a subtle scale-down on press.
+> **Layout — three zones, dense, no big sidebar:**
+> - A slim 64px left rail, icon-only (shield mark at top, a couple of nav glyphs, a status dot at bottom). No text labels in the rail.
+> - A persistent top status strip (32px): left shows a mono tenant selector `tenant: acme-health ▾` (dropdown: acme-health, northwind-bank, globex-insurance); right shows live status chips in mono — `events: 32`, `checkpoint: #30`, and a verify-state chip.
+> - The center **ledger column** is the dominant element: the hash chain runs vertically down it as the literal spine of the screen.
+> - A right **inspector panel** (320px) showing the full detail of the selected event: every attribute, the FULL untruncated `hash` and `prevHash` in mono (wrapped), actor, action, timestamp, seq, and a "Recompute" view (described below).
+> - A persistent bottom telemetry bar (28px) in mono: `last verify: intact · 32/32` etc — like a terminal status line.
 >
-> **Verification banner — the centerpiece, must be dramatic:**
-> - *Verified state:* an emerald-tinted glassy strip with a shield-check icon that draws itself in via SVG path animation, text "Chain intact — {n} events verified against WORM checkpoint", and a faint emerald light-sweep that crosses the strip left-to-right when a verification completes.
-> - *Verifying state:* a thin emerald scan-bar travels down the chain block by block (conveys "walking the chain"); the banner reads "Verifying chain…".
-> - *Tamper state:* the strip snaps to red with a brief horizontal shake (~300ms, once — not looping), a broken-chain-link icon animates splitting into two halves, and text "⚠ TAMPER DETECTED at event #{seq} — hash mismatch; chain diverges from S3 checkpoint". Add a single subtle red flash on the viewport edge (inset box-shadow), once.
+> **The ledger column (the chain):** each event is a tight row (not a fat card), separated by hairline rules. Each row: a large mono **seq number** on the left as the anchor (`0006`), a small muted action dot + action name, the actor, a mono truncated hash `9f2a…c41b`, and a mono timestamp at the right edge. The active/selected row gets a 2px steel-cyan left edge and a slightly raised background. Down the left of the column runs a continuous 1px vertical "chain line" threading through every seq anchor — the literal chain. On hover of a row, briefly illuminate the segment of chain line connecting this row's `prev` up to the previous row, showing the hash dependency.
+> - *On append:* the new row snaps in at the bottom (sharp, 140ms, no bounce) and the chain line extends down to it with a quick draw.
 >
-> **The chain (main panel) — make the data model visible and alive:** a vertical timeline of event blocks, newest at top, each connected to the next by an animated vertical "link" line so it reads as a literal chain. Each block (a `zinc-900` card) shows: a left rail with the seq number inside a circle and the connector line; a bold action label with a colored tag (PHI_READ = sky, RECORD_UPDATE = amber, EXPORT = violet, BREAK_THE_GLASS = red outline + small alert dot); actor and ISO timestamp in muted text; and a JetBrains Mono line `sha256: 9f2a…c41b` with `prev: 4d1e…` beneath it (truncate the middle). On hover, draw a faint cue connecting this block's `prev` to the previous block's `hash`, to show "this hash feeds the next."
-> - *On append:* the new block slides in from the top and its link line draws downward to connect to the chain (motion = the chain extending).
-> - *On verify success:* a quick emerald check ripples down the blocks top-to-bottom, ~120ms staggered.
-> - *On tamper:* the offending block's connector line **snaps and splits** (animate the line breaking apart), the block gains a red border and a "HASH MISMATCH" pill that pops in, and then **every block below it animates a cascading faint-red left-border, one after another at ~150ms stagger** — visually proving the break propagates down the chain. This cascade is the demo's money shot; make it deliberate and legible.
+> **Verification — make it a visible computation, not a banner flip.** When the user clicks "Verify Chain", a steel-cyan cursor travels DOWN the chain line row by row (fast, ~60ms per row). As it passes each row, that row's hash briefly shows it being recomputed and then "locks" — a crisp snap to a verified state with a small steel-cyan tick. In the right inspector, show the active recompute for the row under the cursor: `prevHash + content → SHA256 → hash`, with the recomputed value snapping into alignment with the stored value when they match. When the cursor reaches a tampered row, the recomputed hash and the stored hash are shown **side by side in mono, with the differing hex characters highlighted in `#FF5A3C`**, and they refuse to lock. The chain line below that point turns `#FF5A3C`.
 >
-> **Append modal:** a glassy centered modal (backdrop blur) with fields Actor (text input), Action (select: PHI_READ, RECORD_UPDATE, EXPORT, BREAK_THE_GLASS), and a "Flag for review" checkbox; a primary "Append" button. On submit, close the modal and the new block performs the slide-in + link-draw.
+> **Tamper cascade + WORM proof:** the tampered row gets a `#FF5A3C` left edge and a mono `HASH MISMATCH` tag; then every row below it takes a `#FF5A3C` chain-line segment in sequence, ~120ms stagger, showing the break propagating downstream. Simultaneously the top status verify-chip flips to `#FF5A3C` `TAMPER @ #6`, and the inspector shows a **WORM cross-check**: the Merkle root recomputed from live (tampered) data vs the independent root from the S3 Object Lock checkpoint, side by side in mono, not matching — with a line "live root diverges from WORM checkpoint #30". This is the money shot; make it precise and legible, not flashy.
 >
-> **Micro-interactions:** clicking any hash copies it to the clipboard with a tiny "copied" toast; respect `prefers-reduced-motion` by disabling non-essential animation (keep the state changes, drop the movement).
+> **Append:** a compact inline panel (not a big modal) that slides from the right inspector: fields Actor (text), Action (select), "flag for review" toggle, and an "Append" button. On submit it closes and the new row snaps into the chain.
 >
-> **Data wiring:** use React state only — no localStorage of any kind. Fetch `/api/events?tenantId=...` (GET → `{items:[...]}`) on tenant change; `/api/verify` (POST `{tenantId}` → `{intact, count, breaks:[{seq}]}`) on Verify; `/api/events` (POST the form fields) on Append. Drive the tamper cascade off the real response: if `intact` is false, treat `breaks[0].seq` as the broken block and apply the red cascade to that block and every block after it. Show the verifying scan-bar while the request is in flight. Optimize for desktop 1080p (this is the demo surface).
+> **Motion rules:** everything is crisp and mechanical — durations 120–180ms, sharp ease-out `cubic-bezier(0.2,0,0,1)`, NO spring, NO overshoot, NO soft fades for state changes (state changes SNAP). The emotional target is a precision instrument switching states, not a friendly app. Respect `prefers-reduced-motion` (keep snaps as instant state changes, drop the traveling cursor).
+>
+> **Micro:** clicking any hash copies the full value (mono "copied" confirmation). No localStorage. React state only. Optimize for a 1440px desktop — density is intended.
+>
+> **Data wiring:** fetch `/api/events?tenantId=...` (GET → `{items:[...]}`) on tenant change; `/api/verify` (POST `{tenantId}` → `{intact, count, breaks:[{seq}]}`) on Verify; `/api/events` (POST form fields) on Append. The verify cursor walk can be a timed front-end animation, but the PASS/FAIL result and the broken `seq` MUST come from the real `/api/verify` response — drive the cascade off `breaks[0].seq` and mark that row and every row after it.
 
 ### Wiring notes (after v0 generates it)
-- Install Framer Motion in your project if v0's export needs it: `npm install framer-motion`.
+- Install Framer Motion: `npm install framer-motion`.
+- Load the fonts: add `Geist` (or `Hanken Grotesk`) and `IBM Plex Mono` (or `Space Mono`) via `next/font/google`. Do NOT leave it on Inter/JetBrains Mono — the non-default fonts are part of the identity.
+- **Tenant ID mapping (or the demo silently shows no data):** the backend partition keys use the short IDs the seed script writes — `acme`, `northwind`, `globex`. The UI shows friendlier labels (`acme-health`, etc.). Make the dropdown map label → ID and send the **short ID** as `tenantId` to every API call. Concretely: `const TENANTS = [{ id: "acme", label: "acme-health" }, { id: "northwind", label: "northwind-bank" }, { id: "globex", label: "globex-insurance" }]` and pass `tenant.id`. If you'd rather seed the long IDs, change `TENANTS` in `scripts/seed.mjs` instead — just keep the two sides identical.
 - Replace any mock data with real fetches to your Phase 6 routes.
-- The event block fields map directly to DynamoDB attributes: `seq`, `action`, `actor`, `ts` (timestamp attribute), `hash`, `prevHash`. (Note: timestamp is the `ts` attribute now, not parsed from the SK — the SK is the padded seq.)
-- **Make the tamper state real, not a toggle.** The cascade must fire from the actual `/api/verify` result, because a judge may click Verify themselves. The block to break is the one whose `seq === breaks[0].seq`.
-- Say the rubric line out loud in your demo/writeup: the visual chain *is* the seq-ordered SK + hash links, the cascade *is* the hash dependency propagating, and the tenant switch *is* the partition key re-scoping every query.
+- The event row fields map to DynamoDB attributes: `seq`, `action`, `actor`, `ts` (timestamp attribute), `hash`, `prevHash`. Timestamp is the `ts` attribute, not parsed from the SK (the SK is the padded seq).
+- **The WORM cross-check needs one more endpoint.** Add `GET /api/checkpoint?tenantId=...` that reads the latest checkpoint JSON from the S3 bucket (the Lambda writes `merkleRoot` + `count` there) and returns it. The inspector's "live root vs WORM root" comparison reads the live root from `/api/verify` (have the verifier also return the recomputed Merkle root) and the WORM root from this endpoint. This is the half of your originality story that's currently only told in the writeup — showing it is much stronger.
+- **Make the tamper state real, not a toggle.** The cascade and the WORM-root divergence must fire from the actual `/api/verify` + `/api/checkpoint` results, because a judge may click Verify themselves. The row to break is the one whose `seq === breaks[0].seq`.
+- Say the rubric line out loud in your demo/writeup: the chain spine *is* the seq-ordered keys + hash links, the recompute walk *is* the verifier running, the cascade *is* the hash dependency propagating, the WORM-root divergence *is* the Object Lock guarantee, and the tenant switch *is* the partition key re-scoping every query.
 
 ### Checklist
-- [ ] Dashboard loads real events from your live API; blocks slide in on append.
-- [ ] Tenant switch re-scopes the chain (and visibly re-renders).
-- [ ] Append adds a real event (confirm it also appears in the DynamoDB console).
-- [ ] Verify flips the banner from the real API result and the **red cascade** highlights the correct block + everything after it.
-- [ ] `prefers-reduced-motion` disables the heavy animation without breaking the states.
+- [ ] Fonts are Geist/Plex-Mono (or the named fallbacks), NOT Inter/JetBrains — the data (hashes, seq) is visibly the hero (larger/brighter than labels).
+- [ ] Palette uses the exact instrument hexes; `#FF5A3C` appears ONLY on tamper, nowhere else.
+- [ ] Three-zone layout: 64px rail, ledger spine, inspector — dense, with top status strip + bottom telemetry bar.
+- [ ] Verify runs as a visible **cursor walk** down the chain with per-row lock-in, driven by the real `/api/verify` result for pass/fail.
+- [ ] On tamper: side-by-side hash mismatch (differing hex highlighted), red chain-line cascade from `breaks[0].seq` down, AND the WORM-root divergence in the inspector (from `/api/checkpoint`).
+- [ ] Motion is snappy/mechanical (no spring/bounce); `prefers-reduced-motion` reduces to instant state changes.
+- [ ] Tenant switch re-scopes everything; append snaps a new row into the spine and it appears in the DynamoDB console.
 
 ### Common mistakes
-- Leaving the tamper banner/cascade as a fake toggle — judges may click around; wire it to the real verify response.
-- Over-animating into "consumer toy" territory. Every motion should map to a data-model event (chain extending, fracturing, cascading). If a motion doesn't explain the data, cut it — restraint reads as enterprise trust to this panel.
-- Forcing the timestamp out of the SK — remember the SK is the padded seq now; read `ts` from the attribute.
+- Falling back to Inter + JetBrains Mono + zinc-950 because they're the v0 defaults. That's the exact generic look you're trying to beat — hold the line on the instrument palette and fonts.
+- Treating hashes/seq as muted captions. In this design they are the hero typography — bigger and brighter than the labels. If the labels are louder than the data, the hierarchy is inverted wrong.
+- Spring/bounce motion. It makes a precision tool feel like a consumer app and undercuts the whole "instrument" identity. Snappy, linear, deterministic only.
+- Faking the WORM cross-check or the tamper result. Wire both to the real endpoints — a database judge will try to break it.
+- Over-spacing into "marketing site" airiness. Density is correct here; it signals "real tool."
 
 ---
 
@@ -783,19 +895,80 @@ Pre-load believable demo data, then rehearse and record the <3-minute video so t
 
 ### Steps
 
-**8.1 — Seed script** — `scripts/seed.mjs`: loop `appendEvent` to create ~30 events each for `acme`, `northwind`, `globex`, with a realistic mix of actions and a couple of `flagged: true` (BREAK_THE_GLASS) events. Run it once against the live table. This also triggers checkpoints (every 10 events).
+**8.1 — Seed script** — create `scripts/seed.mjs`. It creates 36 events for each of the three demo tenants — past the checkpoint boundary at 30, so each tenant has a real WORM checkpoint to diverge from. The mix is realistic (mostly reads, some updates/exports, a couple of flagged BREAK_THE_GLASS events), and it's deterministic so your demo looks the same every run.
 
-**8.2 — Rehearse the script** (from the build plan §8). Time it. The peak is: edit one item in the DynamoDB console → click Verify in the app → red banner + correct block. Practice the console edit so it's fast and obvious.
+```js
+// scripts/seed.mjs — run once against the live table (uses your admin creds locally)
+import { appendEvent } from "../lib/append.js";
+
+const TENANTS = ["acme", "northwind", "globex"];
+const EVENTS_PER_TENANT = 36;            // > 30 so each tenant has a checkpoint at boundary 30
+
+const ACTORS = {
+  acme:      ["dr.smith", "dr.lee", "nurse.patel", "admin.ops"],
+  northwind: ["teller.gomez", "analyst.wu", "compliance.ray", "admin.ops"],
+  globex:    ["adjuster.khan", "agent.diaz", "auditor.fox", "admin.ops"],
+};
+
+// weighted action mix: reads dominate, updates/exports occasional, break-the-glass rare
+function pickAction(i) {
+  if (i === 7 || i === 23) return { action: "BREAK_THE_GLASS", flagged: true }; // 2 flagged, inside the 0–29 prefix
+  const r = i % 10;
+  if (r === 0 || r === 5) return { action: "RECORD_UPDATE", flagged: false };
+  if (r === 8)            return { action: "EXPORT",        flagged: false };
+  return { action: "PHI_READ", flagged: false };
+}
+
+function payloadFor(tenant, action, i) {
+  const subject = `${tenant.slice(0, 2).toUpperCase()}-${String(1000 + (i % 25)).padStart(4, "0")}`;
+  switch (action) {
+    case "RECORD_UPDATE":    return { subject, field: ["status", "dosage", "balance", "tier"][i % 4], note: "field updated" };
+    case "EXPORT":           return { subject, scope: "full-record", dest: "compliance-archive" };
+    case "BREAK_THE_GLASS":  return { subject, reason: "emergency access", approver: "supervisor.on-call" };
+    default:                 return { subject, view: "summary" };
+  }
+}
+
+for (const tenant of TENANTS) {
+  console.log(`\nSeeding ${tenant}...`);
+  for (let i = 0; i < EVENTS_PER_TENANT; i++) {
+    const { action, flagged } = pickAction(i);
+    const actor = ACTORS[tenant][i % ACTORS[tenant].length];
+    const r = await appendEvent({
+      tenantId: tenant, actor, action,
+      payload: payloadFor(tenant, action, i), flagged,
+    });
+    process.stdout.write(`  seq ${String(r.seq).padStart(2, "0")} ${action}${flagged ? " *" : ""}\r`);
+  }
+  console.log(`  done — ${EVENTS_PER_TENANT} events`);
+}
+console.log("\nSeed complete. Each tenant has a checkpoint at boundary 30 (events 0–29).");
+```
+Run it once:
+```bash
+node scripts/seed.mjs
+```
+After it finishes, give DynamoDB Streams a few seconds, then confirm the checkpoints landed:
+```bash
+aws s3api list-objects-v2 --bucket ledgerlock-worm-<same-name> --query "Contents[].Key"
+# expect TENANT_acme/checkpoint-30.json, TENANT_northwind/checkpoint-30.json, TENANT_globex/checkpoint-30.json
+```
+
+> **Pick your tamper target now (this matters for the demo).** When you tamper for the demo, edit an event with **seq between 0 and 29** — i.e. *inside* the checkpointed prefix — for example acme **seq 6**. That way a single edit fires *both* proofs at once: the hash-chain cascade (every row after 6 goes red) **and** the WORM-root divergence (the live root of events 0–29 no longer matches `checkpoint-30.json`). If you instead tamper with seq 30–35 (past the boundary), the chain cascade still fires but the WORM panel won't move, because those events aren't checkpointed yet — a weaker demo. Tamper inside the prefix.
+
+**8.2 — Rehearse the script** (timing from the build plan §8). The peak is: edit acme seq 6 in the DynamoDB console → click Verify in the app → the recompute cursor walks down, stalls at seq 6 with the side-by-side hash mismatch, the red cascade runs, and the inspector shows the live root diverging from the WORM checkpoint. Practice the console edit so it's fast and legible on screen.
 
 **8.3 — Record** with the timing:
 - 0:00–0:25 problem · 0:25–1:00 model + tenant isolation + live append · 1:00–1:30 the IAM "no delete" screenshot + S3 COMPLIANCE bucket · 1:30–2:30 **tamper + catch** · 2:30–2:55 shippability + "Built on Amazon DynamoDB."
 - Say the winning line on camera: *"Immutability isn't a rule we follow — it's a permission we don't have."*
 
 ### Checklist
-- [ ] 3 tenants × ~30 events seeded; chains verify intact.
-- [ ] At least one checkpoint per tenant in the WORM bucket.
+- [ ] 3 tenants × 36 events seeded; all three chains verify `intact: true` before any tampering.
+- [ ] `checkpoint-30.json` exists in the WORM bucket for each tenant (Streams may take a few seconds).
+- [ ] On a clean chain, `/api/verify`.`liveRootAtBoundary` equals `/api/checkpoint`.`merkleRoot` for each tenant.
+- [ ] Your chosen tamper target is inside the checkpointed prefix (seq 0–29, e.g. acme seq 6), so the demo fires both the cascade and the WORM-root divergence.
 - [ ] Full demo rehearsed under 3:00 by a stopwatch.
-- [ ] Recording is clear at 1080p; console edit is legible on screen.
+- [ ] Recording is clear at 1080p; the console edit and the side-by-side hash mismatch are legible.
 
 ---
 
