@@ -1,0 +1,14 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AppendAndReadOnly",
+        "Effect": "Allow",
+        "Action": ["dynamodb:PutItem", "dynamodb:Query"],
+        "Resource": [
+          "arn:aws:dynamodb:ap-south-1:664418996303:table/LedgerLock",
+          "arn:aws:dynamodb:ap-south-1:664418996303:table/LedgerLock/index/GSI1"
+        ]
+      }
+    ]
+  }

@@ -1,0 +1,23 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Action": [
+          "dynamodb:GetRecords", "dynamodb:GetShardIterator",
+          "dynamodb:DescribeStream", "dynamodb:ListStreams"
+        ],
+        "Resource": "arn:aws:dynamodb:ap-south-1:664418996303:table/LedgerLock/stream/*"
+      },
+      {
+        "Effect": "Allow",
+        "Action": ["dynamodb:Query"],
+        "Resource": "arn:aws:dynamodb:ap-south-1:664418996303:table/LedgerLock"
+      },
+      {
+        "Effect": "Allow",
+        "Action": ["s3:PutObject", "s3:PutObjectRetention", "s3:GetObject"],
+        "Resource": "arn:aws:s3:::ledgerlock-worm-shailesh-664418996303/*"
+      }
+    ]
+  }

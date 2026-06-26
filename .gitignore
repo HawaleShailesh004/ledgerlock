@@ -1,0 +1,8 @@
+.env*
+node_modules
+*.csv
+checkpointer.zip
+checkpoint*.json
+lambda/node_modules
+.next/
+.env.local
