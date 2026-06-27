@@ -1,19 +1,24 @@
 "use client";
 
-import { ShieldGlyph, LedgerGlyph, PulseGlyph, GearGlyph, ChevronDown } from "./icons";
+import {
+  ShieldGlyph,
+  LedgerGlyph,
+  ChartGlyph,
+  SealGlyph,
+  ChevronDown,
+} from "./icons";
 
 const NAV = [
+  { id: "overview", label: "Overview", Icon: ChartGlyph },
   { id: "ledger", label: "Audit Ledger", Icon: LedgerGlyph },
-  { id: "verification", label: "Verification", Icon: ShieldGlyph },
-  { id: "activity", label: "Activity", Icon: PulseGlyph },
-  { id: "settings", label: "Settings", Icon: GearGlyph },
+  { id: "checkpoints", label: "Checkpoints", Icon: SealGlyph },
 ];
 
-export default function Sidebar({ tenants, tenant, onTenantChange, demo }) {
+export default function Sidebar({ tenants, tenant, onTenantChange, demo, view, onNavigate }) {
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-line bg-surface">
       <div className="flex items-center gap-2.5 px-5 py-5">
-        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-on-accent">
+        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-on-accent shadow-card">
           <ShieldGlyph width={18} height={18} />
         </span>
         <div className="leading-tight">
@@ -25,12 +30,13 @@ export default function Sidebar({ tenants, tenant, onTenantChange, demo }) {
       </div>
 
       <nav className="flex flex-col gap-0.5 px-3 py-2">
-        {NAV.map(({ id, label, Icon }, i) => {
-          const active = i === 0;
+        {NAV.map(({ id, label, Icon }) => {
+          const active = view === id;
           return (
             <button
               key={id}
               type="button"
+              onClick={() => onNavigate(id)}
               aria-current={active ? "page" : undefined}
               className={`flex items-center gap-3 rounded-lg px-3 py-2 text-[13.5px] font-medium transition-colors ${
                 active

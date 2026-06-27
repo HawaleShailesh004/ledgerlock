@@ -159,3 +159,47 @@ export function ClockGlyph(props) {
     </svg>
   );
 }
+
+export function ChartGlyph(props) {
+  return (
+    <svg {...base(props)} aria-hidden="true">
+      <path d="M4 20V4M4 20h16" />
+      <path d="M8 16v-3M12 16V8M16 16v-6M20 16v-2" />
+    </svg>
+  );
+}
+
+export function SealGlyph(props) {
+  return (
+    <svg {...base(props)} aria-hidden="true">
+      <circle cx="12" cy="9" r="5.5" />
+      <path d="M9 13.5L8 21l4-2 4 2-1-7.5" />
+      <path d="M10 9l1.5 1.5L14 8" />
+    </svg>
+  );
+}
+
+export function LockGlyph(props) {
+  return (
+    <svg {...base({ width: 14, height: 14, ...props })} aria-hidden="true">
+      <rect x="5" y="11" width="14" height="9" rx="2" />
+      <path d="M8 11V8a4 4 0 018 0v3" />
+    </svg>
+  );
+}
+
+export function ArrowRight(props) {
+  return (
+    <svg {...base({ width: 15, height: 15, strokeWidth: 1.8, ...props })} aria-hidden="true">
+      <path d="M5 12h14M13 6l6 6-6 6" />
+    </svg>
+  );
+}
+
+export function FlagGlyph(props) {
+  return (
+    <svg {...base({ width: 14, height: 14, ...props })} aria-hidden="true">
+      <path d="M5 21V4M5 4h11l-2 4 2 4H5" />
+    </svg>
+  );
+}

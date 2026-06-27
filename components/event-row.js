@@ -23,7 +23,9 @@ function StatusPill({ rowState }) {
   if (rowState === "verified") {
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-verified-weak px-2 py-0.5 text-[11px] font-medium text-verified">
-        <CheckTick width={12} height={12} />
+        <span className="animate-tick">
+          <CheckTick width={12} height={12} />
+        </span>
         Verified
       </span>
     );
@@ -48,6 +50,7 @@ export default function EventRow({
   selected,
   isNew,
   rowState,
+  cascadeDelay = 0,
   onSelect,
 }) {
   const meta = actionMeta(event.action);
@@ -59,22 +62,29 @@ export default function EventRow({
       onClick={() => onSelect(event.seq)}
       aria-pressed={selected}
       data-seq={event.seq}
-      className={`group flex w-full items-center gap-4 px-8 py-3 text-left transition-colors ${
+      style={broken ? { animationDelay: `${cascadeDelay}ms` } : undefined}
+      className={`group relative flex w-full items-center gap-4 px-8 py-3 text-left transition-colors ${
         isNew ? "animate-row-in" : ""
       } ${rowState === "verifying" ? "animate-scan" : ""} ${
         broken ? "animate-tamper" : ""
-      } ${
-        selected
-          ? "bg-accent-weak/60"
-          : "hover:bg-surface-2"
-      }`}
+      } ${selected ? "bg-accent-weak/60" : "hover:bg-surface-2"}`}
     >
+      {/* Active scan cursor edge */}
+      {rowState === "verifying" && (
+        <span className="absolute inset-y-0 left-0 w-[3px] bg-accent" />
+      )}
+      {rowState === "broken" && (
+        <span className="absolute inset-y-0 left-0 w-[3px] bg-tamper" />
+      )}
+
       {/* Avatar */}
       <span
-        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold ${
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold transition-colors ${
           broken
             ? "bg-tamper-weak text-tamper"
-            : "bg-surface-2 text-secondary group-hover:bg-surface"
+            : rowState === "verified"
+              ? "bg-verified-weak text-verified"
+              : "bg-surface-2 text-secondary group-hover:bg-surface"
         }`}
       >
         {actorInitials(event.actor)}

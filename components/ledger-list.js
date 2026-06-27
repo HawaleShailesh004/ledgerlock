@@ -84,6 +84,11 @@ export default function LedgerList({
           brokenSeq,
           verifiedSet,
         });
+        // Stagger the breach cascade outward from the break point.
+        const cascadeDelay =
+          status === "tamper" && brokenSeq != null && event.seq >= brokenSeq
+            ? Math.min((event.seq - brokenSeq) * 35, 600)
+            : 0;
         return (
           <li key={event.seq}>
             <EventRow
@@ -91,6 +96,7 @@ export default function LedgerList({
               selected={selectedSeq === event.seq}
               isNew={newSeq === event.seq}
               rowState={state}
+              cascadeDelay={cascadeDelay}
               onSelect={onSelect}
             />
           </li>

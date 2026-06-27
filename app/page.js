@@ -6,6 +6,8 @@ import ConfidenceHeader from "@/components/confidence-header";
 import LedgerToolbar from "@/components/ledger-toolbar";
 import LedgerList from "@/components/ledger-list";
 import Inspector from "@/components/inspector";
+import OverviewView from "@/components/overview-view";
+import CheckpointsView from "@/components/checkpoints-view";
 import AppendModal from "@/components/append-modal";
 import Toast from "@/components/toast";
 import { BreakGlyph } from "@/components/icons";
@@ -17,6 +19,7 @@ import {
   tamperDemo,
   recomputeRow,
 } from "@/lib/demo-ledger";
+import { computeMetrics } from "@/lib/metrics";
 import { downloadComplianceReport } from "@/lib/export-report";
 
 const FALLBACK_TENANTS = [
@@ -44,6 +47,7 @@ export default function Page() {
   const [reduced, setReduced] = useState(false);
   const [demo, setDemo] = useState(false);
   const [lastVerifyTs, setLastVerifyTs] = useState(null);
+  const [view, setView] = useState("overview");
 
   // Filters
   const [query, setQuery] = useState("");
@@ -330,6 +334,7 @@ export default function Page() {
 
   const selectedEvent = events.find((e) => e.seq === selectedSeq) || null;
   const checkpointCount = checkpoint?.count ?? null;
+  const metrics = useMemo(() => computeMetrics(events), [events]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-canvas">
@@ -338,49 +343,83 @@ export default function Page() {
         tenant={tenant}
         onTenantChange={setTenant}
         demo={demo}
+        view={view}
+        onNavigate={setView}
       />
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Main ledger column */}
         <main className="flex flex-1 flex-col overflow-hidden">
           <div className="flex-1 overflow-y-auto">
-            <ConfidenceHeader
-              tenantLabel={tenant.label}
-              count={events.length}
-              checkpointCount={checkpointCount}
-              status={status}
-              brokenSeq={brokenSeq}
-              lastVerifyTs={lastVerifyTs}
-              verifying={status === "verifying"}
-              onVerify={handleVerify}
-            />
+            {view === "overview" && (
+              <OverviewView
+                tenantLabel={tenant.label}
+                metrics={metrics}
+                events={events}
+                checkpointCount={checkpointCount}
+                status={status}
+                brokenSeq={brokenSeq}
+                verifying={status === "verifying"}
+                onVerify={handleVerify}
+                onOpenLedger={() => setView("ledger")}
+              />
+            )}
 
-            <LedgerToolbar
-              query={query}
-              onQuery={setQuery}
-              actionFilter={actionFilter}
-              onActionFilter={setActionFilter}
-              flaggedOnly={flaggedOnly}
-              onFlaggedOnly={setFlaggedOnly}
-              resultCount={filtered.length}
-              totalCount={events.length}
-              onAppend={() => setAppendOpen(true)}
-              onExport={handleExport}
-            />
+            {view === "ledger" && (
+              <>
+                <ConfidenceHeader
+                  tenantLabel={tenant.label}
+                  count={events.length}
+                  checkpointCount={checkpointCount}
+                  status={status}
+                  brokenSeq={brokenSeq}
+                  lastVerifyTs={lastVerifyTs}
+                  verifying={status === "verifying"}
+                  metrics={metrics}
+                  onVerify={handleVerify}
+                />
 
-            <LedgerList
-              events={filtered}
-              selectedSeq={selectedSeq}
-              newSeq={newSeq}
-              status={status}
-              brokenSeq={brokenSeq}
-              reduced={reduced}
-              onSelect={handleSelect}
-              onCursorSeq={handleCursorSeq}
-            />
+                <LedgerToolbar
+                  query={query}
+                  onQuery={setQuery}
+                  actionFilter={actionFilter}
+                  onActionFilter={setActionFilter}
+                  flaggedOnly={flaggedOnly}
+                  onFlaggedOnly={setFlaggedOnly}
+                  resultCount={filtered.length}
+                  totalCount={events.length}
+                  onAppend={() => setAppendOpen(true)}
+                  onExport={handleExport}
+                />
+
+                <LedgerList
+                  events={filtered}
+                  selectedSeq={selectedSeq}
+                  newSeq={newSeq}
+                  status={status}
+                  brokenSeq={brokenSeq}
+                  reduced={reduced}
+                  onSelect={handleSelect}
+                  onCursorSeq={handleCursorSeq}
+                />
+              </>
+            )}
+
+            {view === "checkpoints" && (
+              <CheckpointsView
+                tenantLabel={tenant.label}
+                checkpoint={checkpoint}
+                totalEvents={events.length}
+                worm={worm}
+                status={status}
+                brokenSeq={brokenSeq}
+                verifying={status === "verifying"}
+                onVerify={handleVerify}
+                onCopy={handleCopy}
+              />
+            )}
           </div>
 
-          {demo && (
+          {view === "ledger" && demo && (
             <div className="flex items-center justify-between border-t border-line bg-surface px-8 py-2.5">
               <span className="text-[12px] text-muted">
                 Demo environment — explore the tamper-detection flow safely.
@@ -397,13 +436,15 @@ export default function Page() {
           )}
         </main>
 
-        <Inspector
-          event={selectedEvent}
-          recompute={recompute}
-          worm={worm}
-          onCopy={handleCopy}
-          onClose={() => setSelectedSeq(null)}
-        />
+        {view === "ledger" && (
+          <Inspector
+            event={selectedEvent}
+            recompute={recompute}
+            worm={worm}
+            onCopy={handleCopy}
+            onClose={() => setSelectedSeq(null)}
+          />
+        )}
       </div>
 
       <AppendModal
