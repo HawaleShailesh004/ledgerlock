@@ -1,14 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import LeftRail from "@/components/left-rail";
-import StatusStrip from "@/components/status-strip";
-import ColumnHeader from "@/components/column-header";
-import LedgerColumn from "@/components/ledger-column";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import Sidebar from "@/components/sidebar";
+import ConfidenceHeader from "@/components/confidence-header";
+import LedgerToolbar from "@/components/ledger-toolbar";
+import LedgerList from "@/components/ledger-list";
 import Inspector from "@/components/inspector";
-import AppendPanel from "@/components/append-panel";
-import TelemetryBar from "@/components/telemetry-bar";
+import AppendModal from "@/components/append-modal";
 import Toast from "@/components/toast";
+import { BreakGlyph } from "@/components/icons";
 import {
   buildSeed,
   buildCheckpoint,
@@ -17,6 +17,7 @@ import {
   tamperDemo,
   recomputeRow,
 } from "@/lib/demo-ledger";
+import { downloadComplianceReport } from "@/lib/export-report";
 
 const FALLBACK_TENANTS = [
   { id: "acme", label: "acme-health" },
@@ -33,9 +34,8 @@ export default function Page() {
   const [checkpoint, setCheckpoint] = useState(null);
   const [status, setStatus] = useState("idle"); // idle|verifying|verified|tamper
   const [brokenSeq, setBrokenSeq] = useState(null);
-  const [verifyResult, setVerifyResult] = useState(null); // raw verify response
+  const [verifyResult, setVerifyResult] = useState(null);
   const [selectedSeq, setSelectedSeq] = useState(null);
-  const [cursorSeq, setCursorSeq] = useState(null);
   const [recompute, setRecompute] = useState(null);
   const [worm, setWorm] = useState(null);
   const [newSeq, setNewSeq] = useState(null);
@@ -45,12 +45,25 @@ export default function Page() {
   const [demo, setDemo] = useState(false);
   const [lastVerifyTs, setLastVerifyTs] = useState(null);
 
-  const toastTimer = useRef(null);
-  const demoStore = useRef({}); // tenantId -> oldest-first chain
-  const demoCheckpoints = useRef({}); // tenantId -> checkpoint
-  const demoActive = useRef(false);
+  // Filters
+  const [query, setQuery] = useState("");
+  const [actionFilter, setActionFilter] = useState("all");
+  const [flaggedOnly, setFlaggedOnly] = useState(false);
 
-  // prefers-reduced-motion
+  const toastTimer = useRef(null);
+  const demoStore = useRef({});
+  const demoCheckpoints = useRef({});
+  const demoActive = useRef(false);
+  const eventsRef = useRef(events);
+  const tenantRef = useRef(tenant);
+
+  useEffect(() => {
+    eventsRef.current = events;
+  }, [events]);
+  useEffect(() => {
+    tenantRef.current = tenant;
+  }, [tenant]);
+
   useEffect(() => {
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
     setReduced(mq.matches);
@@ -59,7 +72,6 @@ export default function Page() {
     return () => mq.removeEventListener("change", onChange);
   }, []);
 
-  // Load tenants once
   useEffect(() => {
     let cancelled = false;
     fetch("/api/tenants")
@@ -78,7 +90,7 @@ export default function Page() {
   const showToast = useCallback((msg) => {
     setToast(msg);
     if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(""), 1600);
+    toastTimer.current = setTimeout(() => setToast(""), 1800);
   }, []);
 
   const publishDemo = useCallback((tenantId) => {
@@ -142,14 +154,13 @@ export default function Page() {
     (value) => {
       if (!value) return;
       navigator.clipboard?.writeText(value).then(
-        () => showToast("copied"),
-        () => showToast("copy failed")
+        () => showToast("Copied to clipboard"),
+        () => showToast("Copy failed")
       );
     },
     [showToast]
   );
 
-  // Recompute the inspector's recompute view for a given seq from current data.
   const refreshRecompute = useCallback(async (seq) => {
     if (seq == null) {
       setRecompute(null);
@@ -171,26 +182,15 @@ export default function Page() {
     setRecompute(rc);
   }, []);
 
-  // refs so the cursor callback always sees fresh data without re-subscribing
-  const eventsRef = useRef(events);
-  const tenantRef = useRef(tenant);
-  useEffect(() => {
-    eventsRef.current = events;
-  }, [events]);
-  useEffect(() => {
-    tenantRef.current = tenant;
-  }, [tenant]);
-
-  const handleCursorSeq = useCallback(
+  const handleSelect = useCallback(
     (seq) => {
-      setCursorSeq(seq);
       setSelectedSeq(seq);
       refreshRecompute(seq);
     },
     [refreshRecompute]
   );
 
-  const handleSelect = useCallback(
+  const handleCursorSeq = useCallback(
     (seq) => {
       setSelectedSeq(seq);
       refreshRecompute(seq);
@@ -221,12 +221,13 @@ export default function Page() {
             return v;
           });
 
-      const walkMs = reduced ? 120 : Math.max(900, events.length * 60 + 200);
+      const walkMs = reduced ? 150 : Math.max(900, events.length * 45 + 250);
       const [res] = await Promise.all([verifyReq, delay(walkMs)]);
       setVerifyResult(res);
-      setLastVerifyTs(new Date().toLocaleTimeString("en-US", { hour12: false }));
+      setLastVerifyTs(
+        new Date().toLocaleTimeString("en-US", { hour12: false })
+      );
 
-      // Build WORM cross-check panel
       const cp = demoActive.current ? demoCheckpoints.current[tid] : checkpoint;
       if (cp && res?.liveRootAtBoundary) {
         setWorm({
@@ -241,16 +242,18 @@ export default function Page() {
 
       if (res?.intact) {
         setStatus("verified");
+        showToast(`Chain intact — ${res.count} events verified`);
       } else {
         const seq = res?.breaks?.[0]?.seq ?? null;
         setBrokenSeq(seq);
         setStatus("tamper");
         setSelectedSeq(seq);
         refreshRecompute(seq);
+        showToast(`Integrity breach detected at #${seq}`);
       }
     } catch {
       setStatus("idle");
-      showToast("verification request failed");
+      showToast("Verification request failed");
     }
   }, [status, tenant, events.length, reduced, checkpoint, showToast, refreshRecompute]);
 
@@ -269,8 +272,8 @@ export default function Page() {
         setWorm(null);
         setNewSeq(seq);
         publishDemo(tid);
-        showToast(`event #${seq} appended`);
-        setTimeout(() => setNewSeq(null), 1200);
+        showToast(`Event #${seq} logged`);
+        setTimeout(() => setNewSeq(null), 1400);
         return;
       }
       const res = await fetch("/api/events", {
@@ -280,7 +283,7 @@ export default function Page() {
       });
       const data = await res.json();
       if (!res.ok || data?.ok === false) {
-        showToast(data?.error || "append failed");
+        showToast(data?.error || "Append failed");
         throw new Error("append_failed");
       }
       setStatus("idle");
@@ -288,8 +291,8 @@ export default function Page() {
       setWorm(null);
       setNewSeq(data.seq);
       await loadEvents(tid);
-      showToast(`event #${data.seq} appended`);
-      setTimeout(() => setNewSeq(null), 1200);
+      showToast(`Event #${data.seq} logged`);
+      setTimeout(() => setNewSeq(null), 1400);
     },
     [tenant, loadEvents, showToast, publishDemo]
   );
@@ -303,82 +306,111 @@ export default function Page() {
     setBrokenSeq(null);
     setWorm(null);
     publishDemo(tid);
-    showToast(`record #${seq} silently altered — run Verify Chain`);
+    showToast(`Record #${seq} silently altered — run verification`);
   }, [tenant, publishDemo, showToast]);
+
+  const handleExport = useCallback(() => {
+    downloadComplianceReport({ tenant, events, status, lastVerifyTs });
+    showToast("Compliance report downloaded");
+  }, [tenant, events, status, lastVerifyTs, showToast]);
+
+  // Apply filters
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return events.filter((e) => {
+      if (actionFilter !== "all" && e.action !== actionFilter) return false;
+      if (flaggedOnly && !e.flagged) return false;
+      if (q) {
+        const hay = `${e.actor} ${e.action} ${e.hash} ${e.prevHash}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [events, query, actionFilter, flaggedOnly]);
 
   const selectedEvent = events.find((e) => e.seq === selectedSeq) || null;
   const checkpointCount = checkpoint?.count ?? null;
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-canvas">
-      <LeftRail
-        statusColor={
-          status === "tamper" ? "var(--color-tamper)" : "var(--color-steel)"
-        }
-        statusTitle={status === "tamper" ? "integrity breach" : "operational"}
+    <div className="flex h-screen overflow-hidden bg-canvas">
+      <Sidebar
+        tenants={tenants}
+        tenant={tenant}
+        onTenantChange={setTenant}
+        demo={demo}
       />
 
-      <div className="flex flex-1 flex-col overflow-hidden pl-16">
-        <StatusStrip
-          tenants={tenants}
-          tenant={tenant}
-          onTenantChange={setTenant}
-          count={events.length}
-          checkpointCount={checkpointCount}
-          status={status}
-          brokenSeq={brokenSeq}
-          onVerify={handleVerify}
-          verifying={status === "verifying"}
-        />
-
-        <div className="flex flex-1 overflow-hidden">
-          {/* center ledger column — the dominant element */}
-          <main className="flex flex-1 flex-col overflow-hidden">
-            <ColumnHeader
-              onAppend={() => setAppendOpen(true)}
-              demo={demo}
-              onTamper={handleTamper}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Main ledger column */}
+        <main className="flex flex-1 flex-col overflow-hidden">
+          <div className="flex-1 overflow-y-auto">
+            <ConfidenceHeader
+              tenantLabel={tenant.label}
+              count={events.length}
+              checkpointCount={checkpointCount}
+              status={status}
+              brokenSeq={brokenSeq}
+              lastVerifyTs={lastVerifyTs}
+              verifying={status === "verifying"}
+              onVerify={handleVerify}
             />
-            <div className="flex-1 overflow-y-auto">
-              <LedgerColumn
-                events={events}
-                selectedSeq={selectedSeq}
-                newSeq={newSeq}
-                status={status}
-                brokenSeq={brokenSeq}
-                reduced={reduced}
-                onSelect={handleSelect}
-                onCopyHash={handleCopy}
-                onCursorSeq={handleCursorSeq}
-              />
+
+            <LedgerToolbar
+              query={query}
+              onQuery={setQuery}
+              actionFilter={actionFilter}
+              onActionFilter={setActionFilter}
+              flaggedOnly={flaggedOnly}
+              onFlaggedOnly={setFlaggedOnly}
+              resultCount={filtered.length}
+              totalCount={events.length}
+              onAppend={() => setAppendOpen(true)}
+              onExport={handleExport}
+            />
+
+            <LedgerList
+              events={filtered}
+              selectedSeq={selectedSeq}
+              newSeq={newSeq}
+              status={status}
+              brokenSeq={brokenSeq}
+              reduced={reduced}
+              onSelect={handleSelect}
+              onCursorSeq={handleCursorSeq}
+            />
+          </div>
+
+          {demo && (
+            <div className="flex items-center justify-between border-t border-line bg-surface px-8 py-2.5">
+              <span className="text-[12px] text-muted">
+                Demo environment — explore the tamper-detection flow safely.
+              </span>
+              <button
+                type="button"
+                onClick={handleTamper}
+                className="flex items-center gap-1.5 rounded-lg border border-tamper/30 bg-tamper-weak px-3 py-1.5 text-[12px] font-medium text-tamper transition-colors hover:bg-tamper/10"
+              >
+                <BreakGlyph width={13} height={13} />
+                Simulate tampering
+              </button>
             </div>
-          </main>
+          )}
+        </main>
 
-          <Inspector
-            event={selectedEvent}
-            recompute={recompute}
-            worm={worm}
-            onCopy={handleCopy}
-            appendSlot={
-              <AppendPanel
-                open={appendOpen}
-                onClose={() => setAppendOpen(false)}
-                onSubmit={handleAppend}
-              />
-            }
-          />
-        </div>
-
-        <TelemetryBar
-          status={status}
-          count={events.length}
-          brokenSeq={brokenSeq}
-          checkpointCount={checkpointCount}
-          demo={demo}
-          lastVerifyTs={lastVerifyTs}
+        <Inspector
+          event={selectedEvent}
+          recompute={recompute}
+          worm={worm}
+          onCopy={handleCopy}
+          onClose={() => setSelectedSeq(null)}
         />
       </div>
 
+      <AppendModal
+        open={appendOpen}
+        onClose={() => setAppendOpen(false)}
+        onSubmit={handleAppend}
+      />
       <Toast message={toast} />
     </div>
   );

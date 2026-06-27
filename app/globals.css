@@ -1,95 +1,133 @@
 @import "tailwindcss";
 
 @theme inline {
-  /* Precision-instrument palette — exact hex, not Tailwind defaults */
-  --color-canvas: #0b0c0e;
-  --color-panel: #111317;
-  --color-raised: #16181d;
-  --color-hairline: #23262c;
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
 
-  --color-primary: #e7e9ec;
-  --color-secondary: #aab1ba;
-  --color-label: #7b828d;
+  /* Neutrals */
+  --color-canvas: #f4f6f8;
+  --color-surface: #ffffff;
+  --color-surface-2: #f9fafb;
+  --color-line: #e4e8ed;
+  --color-line-strong: #d4dae1;
 
-  --color-steel: #3fb6c4;
-  --color-tamper: #ff5a3c;
+  /* Text */
+  --color-primary: #1a2230;
+  --color-secondary: #586273;
+  --color-muted: #8b95a4;
 
-  /* muted action dot colors */
-  --color-act-phi: #6b8afd;
-  --color-act-update: #c9a24b;
-  --color-act-export: #9b7bd4;
-  --color-act-glass: #ff5a3c;
+  /* Brand accent — calm, trustworthy teal */
+  --color-accent: #0f7d6b;
+  --color-accent-hover: #0c6a5a;
+  --color-accent-weak: #e6f4f1;
+  --color-on-accent: #ffffff;
 
-  --font-sans: var(--font-geist), "Hanken Grotesk", system-ui, sans-serif;
-  --font-mono: var(--font-plex-mono), "Space Mono", ui-monospace, monospace;
+  /* Functional status */
+  --color-verified: #15803d;
+  --color-verified-weak: #e7f5ec;
+  --color-flagged: #b45309;
+  --color-flagged-weak: #fbf0e1;
+  --color-tamper: #c1281f;
+  --color-tamper-weak: #fbe9e7;
+
+  --radius: 0.75rem;
 }
 
-html {
-  color-scheme: dark;
-}
-
-body {
-  background-color: var(--color-canvas);
-}
-
-/* Small uppercase tracked label */
-.label {
-  font-size: 11px;
-  line-height: 1.2;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--color-label);
-}
-
-/* Thin scrollbars to match the instrument aesthetic */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-hairline) transparent;
-}
-*::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-*::-webkit-scrollbar-thumb {
-  background: var(--color-hairline);
-}
-*::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-/* New-row snap-in (sharp, 140ms, no bounce) */
-@keyframes row-snap-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
+@layer base {
+  * {
+    border-color: var(--color-line);
   }
-  to {
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-primary);
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* Verify scan sweep highlight */
+@keyframes scanPulse {
+  0% {
+    background-color: var(--color-accent-weak);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+.animate-scan {
+  animation: scanPulse 0.6s ease-out forwards;
+}
+
+/* Lock-in tick pop */
+@keyframes tickPop {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.15);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.animate-tick {
+  animation: tickPop 0.32s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* Tamper cascade flash */
+@keyframes tamperFlash {
+  0% {
+    background-color: var(--color-tamper-weak);
+  }
+  100% {
+    background-color: color-mix(in srgb, var(--color-tamper-weak) 45%, transparent);
+  }
+}
+.animate-tamper {
+  animation: tamperFlash 0.5s ease-out forwards;
+}
+
+/* New row entrance */
+@keyframes rowIn {
+  0% {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  100% {
     opacity: 1;
     transform: translateY(0);
   }
 }
-.row-snap-in {
-  animation: row-snap-in 140ms cubic-bezier(0.2, 0, 0, 1);
+.animate-row-in {
+  animation: rowIn 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
-/* Verified tick pop — crisp */
-@keyframes tick-lock {
+/* Drawer slide */
+@keyframes drawerIn {
   0% {
+    transform: translateX(16px);
     opacity: 0;
-    transform: scale(0.6);
   }
   100% {
+    transform: translateX(0);
     opacity: 1;
-    transform: scale(1);
   }
 }
-.tick-lock {
-  animation: tick-lock 120ms cubic-bezier(0.2, 0, 0, 1);
+.animate-drawer {
+  animation: drawerIn 0.28s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .row-snap-in,
-  .tick-lock {
-    animation-duration: 0.001ms !important;
+  .animate-scan,
+  .animate-tick,
+  .animate-tamper,
+  .animate-row-in,
+  .animate-drawer {
+    animation: none !important;
   }
+}
+
+::selection {
+  background-color: var(--color-accent-weak);
 }
