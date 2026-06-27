@@ -1,6 +1,6 @@
 // Truncate a hash in the middle: 9f2a8c...d3c41b -> 9f2a…c41b
 export function truncMid(hash, head = 4, tail = 4) {
-  if (!hash) return "—";
+  if (!hash) return "-";
   if (hash === "GENESIS") return "GENESIS";
   if (hash.length <= head + tail + 1) return hash;
   return `${hash.slice(0, head)}…${hash.slice(-tail)}`;

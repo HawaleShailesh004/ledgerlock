@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   ShieldGlyph,
   LedgerGlyph,
@@ -14,10 +15,20 @@ const NAV = [
   { id: "checkpoints", label: "Checkpoints", Icon: SealGlyph },
 ];
 
-export default function Sidebar({ tenants, tenant, onTenantChange, demo, view, onNavigate }) {
+export default function Sidebar({
+  tenants,
+  tenant,
+  onTenantChange,
+  demo,
+  view,
+  onNavigate,
+}) {
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-line bg-surface">
-      <div className="flex items-center gap-2.5 px-5 py-5">
+      <Link
+        href="/"
+        className="flex items-center gap-2.5 px-5 py-5 transition-opacity hover:opacity-80"
+      >
         <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-on-accent shadow-card">
           <ShieldGlyph width={18} height={18} />
         </span>
@@ -27,7 +38,7 @@ export default function Sidebar({ tenants, tenant, onTenantChange, demo, view, o
           </div>
           <div className="text-[11px] text-muted">Compliance audit</div>
         </div>
-      </div>
+      </Link>
 
       <nav className="flex flex-col gap-0.5 px-3 py-2">
         {NAV.map(({ id, label, Icon }) => {
@@ -75,7 +86,7 @@ export default function Sidebar({ tenants, tenant, onTenantChange, demo, view, o
         </div>
         {demo && (
           <p className="mt-2 px-2 text-[11px] leading-snug text-muted">
-            Demo data — live DynamoDB ledger loads automatically when connected.
+            Demo data - live DynamoDB ledger loads automatically when connected.
           </p>
         )}
       </div>

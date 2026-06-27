@@ -51,12 +51,23 @@ export default function ConfidenceHeader({
 
   let gauge;
   if (verifying) {
-    gauge = { tone: "accent", value: "…", label: "Scanning", pct: 30, spinning: true };
+    gauge = {
+      tone: "accent",
+      value: "…",
+      label: "Scanning",
+      pct: 30,
+      spinning: true,
+    };
   } else if (verified) {
     gauge = { tone: "verified", value: "100%", label: "Integrity", pct: 100 };
   } else if (tampered) {
     const intact = count ? Math.round(((brokenSeq ?? 0) / count) * 100) : 0;
-    gauge = { tone: "tamper", value: `${intact}%`, label: "Integrity", pct: intact };
+    gauge = {
+      tone: "tamper",
+      value: `${intact}%`,
+      label: "Integrity",
+      pct: intact,
+    };
   } else {
     gauge = { tone: "accent", value: "Ready", label: "to verify", pct: 100 };
   }
@@ -75,9 +86,11 @@ export default function ConfidenceHeader({
     : verified
       ? {
           wash: "hero-wash-verified",
-          icon: <ShieldCheck className="text-verified" width={20} height={20} />,
+          icon: (
+            <ShieldCheck className="text-verified" width={20} height={20} />
+          ),
           iconBg: "bg-verified-weak",
-          title: "Chain verified — all records intact",
+          title: "Chain verified - all records intact",
           body: `${count} events recomputed and matched against the sealed WORM checkpoint.`,
           titleColor: "text-verified",
         }
@@ -175,7 +188,7 @@ export default function ConfidenceHeader({
           />
           <StatCard
             label="Sealed checkpoint"
-            value={checkpointCount != null ? `#${checkpointCount}` : "—"}
+            value={checkpointCount != null ? `#${checkpointCount}` : "-"}
             sub="WORM-protected"
             icon={<LockGlyph className="text-accent" />}
           />
@@ -187,7 +200,13 @@ export default function ConfidenceHeader({
                 {lastVerifyTs || "Not yet"}
               </span>
             }
-            sub={tampered ? "Breach detected" : verified ? "All intact" : "Awaiting check"}
+            sub={
+              tampered
+                ? "Breach detected"
+                : verified
+                  ? "All intact"
+                  : "Awaiting check"
+            }
           />
         </div>
       </div>

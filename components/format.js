@@ -1,8 +1,16 @@
 // Shared formatting + action metadata for the audit console.
 
 export const ACTION_META = {
-  PHI_READ: { label: "Viewed patient record", short: "PHI read", tone: "neutral" },
-  RECORD_UPDATE: { label: "Updated a record", short: "Record update", tone: "neutral" },
+  PHI_READ: {
+    label: "Viewed patient record",
+    short: "PHI read",
+    tone: "neutral",
+  },
+  RECORD_UPDATE: {
+    label: "Updated a record",
+    short: "Record update",
+    tone: "neutral",
+  },
   EXPORT: { label: "Exported data", short: "Export", tone: "flagged" },
   BREAK_THE_GLASS: {
     label: "Break-the-glass access",
@@ -19,9 +27,9 @@ export function actionMeta(action) {
 
 export const ACTION_OPTIONS = Object.keys(ACTION_META);
 
-// 9f2a3c…e41b9d — first 6 + last 6 hex of a hash
+// 9f2a3c…e41b9d - first 6 + last 6 hex of a hash
 export function shortHash(hash, head = 6, tail = 6) {
-  if (!hash) return "—";
+  if (!hash) return "-";
   if (hash.length <= head + tail + 1) return hash;
   return `${hash.slice(0, head)}…${hash.slice(-tail)}`;
 }
@@ -34,7 +42,8 @@ export function seqLabel(seq) {
 export function actorInitials(actor = "") {
   const name = actor.split("@")[0] || actor;
   const parts = name.split(/[.\-_]/).filter(Boolean);
-  const letters = (parts[0]?.[0] || "") + (parts[1]?.[0] || parts[0]?.[1] || "");
+  const letters =
+    (parts[0]?.[0] || "") + (parts[1]?.[0] || parts[0]?.[1] || "");
   return letters.toUpperCase() || "?";
 }
 
@@ -58,7 +67,7 @@ export function relativeTime(ts) {
   }
 }
 
-// "Apr 3, 14:22" — readable absolute time for rows
+// "Apr 3, 14:22" - readable absolute time for rows
 export function shortDateTime(ts) {
   try {
     return new Date(ts).toLocaleString("en-US", {

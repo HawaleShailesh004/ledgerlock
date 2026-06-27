@@ -1,20 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import {
-  actionMeta,
-  actorName,
-  seqLabel,
-  fullStamp,
-  diffHex,
-} from "./format";
+import { useEffect, useState } from "react";
+import { actionMeta, actorName, seqLabel, fullStamp, diffHex } from "./format";
 import {
   CloseGlyph,
   CopyGlyph,
   CheckTick,
   BreakGlyph,
   ChevronRight,
-  LinkGlyph,
 } from "./icons";
 
 function Field({ label, children }) {
@@ -35,11 +28,14 @@ function HashLine({ value, onCopy, diffAgainst }) {
       <code className="flex-1 break-all rounded-md bg-surface-2 px-2.5 py-2 font-mono text-[11.5px] leading-relaxed text-secondary">
         {chars
           ? chars.map((c, i) => (
-              <span key={i} className={c.diff ? "bg-tamper-weak text-tamper" : ""}>
+              <span
+                key={i}
+                className={c.diff ? "bg-tamper-weak text-tamper" : ""}
+              >
                 {c.ch}
               </span>
             ))
-          : value || "—"}
+          : value || "-"}
       </code>
       <button
         type="button"
@@ -68,42 +64,52 @@ function Collapsible({ title, defaultOpen = false, badge, children }) {
         <span className="text-[13px] font-semibold text-primary">{title}</span>
         {badge}
       </button>
-      {open && <div className="border-t border-line px-4 py-3.5">{children}</div>}
+      {open && (
+        <div className="border-t border-line px-4 py-3.5">{children}</div>
+      )}
     </div>
   );
 }
 
 export default function Inspector({ event, recompute, worm, onCopy, onClose }) {
-  if (!event) {
-    return (
-      <aside className="flex w-[380px] shrink-0 flex-col items-center justify-center border-l border-line bg-surface px-8 text-center">
-        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-surface-2 text-muted">
-          <LinkGlyph width={20} height={20} />
-        </div>
-        <p className="mt-3 text-[13.5px] font-medium text-secondary">
-          No event selected
-        </p>
-        <p className="mt-1 text-[12.5px] text-muted">
-          Select a row to inspect its details and cryptographic proof.
-        </p>
-      </aside>
-    );
-  }
+  useEffect(() => {
+    if (!event) return;
+    const onKey = (e) => e.key === "Escape" && onClose?.();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [event, onClose]);
+
+  if (!event) return null;
 
   const meta = actionMeta(event.action);
   const mismatch = recompute && !recompute.match;
 
   return (
-    <aside className="animate-drawer flex w-[380px] shrink-0 flex-col border-l border-line bg-surface">
-      {/* Header */}
-      <div className="flex items-start justify-between border-b border-line px-6 py-5">
-        <div>
-          <div className="font-mono text-[12px] text-muted">{seqLabel(event.seq)}</div>
-          <h2 className="mt-0.5 text-[16px] font-semibold tracking-tight text-primary">
-            {meta.label}
-          </h2>
-        </div>
-        {onClose && (
+    <div
+      className="fixed inset-0 z-[60] flex items-stretch justify-end p-0 sm:p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="inspector-title"
+    >
+      <div
+        className="absolute inset-0 bg-primary/30 backdrop-blur-sm"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+
+      <aside className="animate-drawer relative flex h-full w-full max-w-[420px] flex-col overflow-hidden rounded-none border-l border-line bg-surface shadow-pop sm:max-h-[calc(100vh-2rem)] sm:rounded-2xl sm:border">
+        <div className="flex items-start justify-between border-b border-line px-6 py-5">
+          <div>
+            <div className="font-mono text-[12px] text-muted">
+              {seqLabel(event.seq)}
+            </div>
+            <h2
+              id="inspector-title"
+              className="mt-0.5 text-[16px] font-semibold tracking-tight text-primary"
+            >
+              {meta.label}
+            </h2>
+          </div>
           <button
             type="button"
             onClick={onClose}
@@ -112,131 +118,129 @@ export default function Inspector({ event, recompute, worm, onCopy, onClose }) {
           >
             <CloseGlyph />
           </button>
-        )}
-      </div>
-
-      <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
-        {mismatch && (
-          <div className="flex items-start gap-2 rounded-lg border border-tamper/30 bg-tamper-weak px-3 py-2.5">
-            <BreakGlyph className="mt-0.5 text-tamper" width={15} height={15} />
-            <p className="text-[12.5px] leading-snug text-tamper">
-              This record was altered after it was sealed. The recomputed hash no
-              longer matches the stored value.
-            </p>
-          </div>
-        )}
-
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Actor">
-            <span className={mismatch ? "text-tamper" : ""}>
-              {actorName(event.actor)}
-            </span>
-            <div className="text-[11.5px] text-muted">{event.actor}</div>
-          </Field>
-          <Field label="Flagged">{event.flagged ? "Yes" : "No"}</Field>
-          <Field label="Timestamp">
-            <span className="font-mono text-[12px]">{fullStamp(event.ts)}</span>
-          </Field>
-          <Field label="Source IP">
-            <span className="font-mono text-[12px]">
-              {event.payload?.ip || "—"}
-            </span>
-          </Field>
         </div>
 
-        {/* Proof on demand */}
-        <Collapsible
-          title="Cryptographic proof"
-          defaultOpen={mismatch}
-          badge={
-            recompute ? (
-              recompute.match ? (
-                <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-verified-weak px-2 py-0.5 text-[11px] font-medium text-verified">
-                  <CheckTick width={11} height={11} /> Match
-                </span>
-              ) : (
-                <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-tamper-weak px-2 py-0.5 text-[11px] font-medium text-tamper">
-                  <BreakGlyph width={11} height={11} /> Mismatch
-                </span>
-              )
-            ) : null
-          }
-        >
-          <div className="space-y-3">
-            <div>
-              <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted">
-                Previous hash
-              </div>
-              <HashLine value={event.prevHash} onCopy={onCopy} />
+        <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+          {mismatch && (
+            <div className="flex items-start gap-2 rounded-lg border border-tamper/30 bg-tamper-weak px-3 py-2.5">
+              <BreakGlyph className="mt-0.5 text-tamper" width={15} height={15} />
+              <p className="text-[12.5px] leading-snug text-tamper">
+                This record was altered after it was sealed. The recomputed hash
+                no longer matches the stored value.
+              </p>
             </div>
-            <div>
-              <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted">
-                Stored hash
-              </div>
-              <HashLine value={event.hash} onCopy={onCopy} />
-            </div>
-            {recompute && (
-              <div>
-                <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted">
-                  Recomputed hash
-                </div>
-                <HashLine
-                  value={recompute.recomputed}
-                  onCopy={onCopy}
-                  diffAgainst={mismatch ? recompute.stored : null}
-                />
-                <p className="mt-1.5 text-[12px] text-secondary">
-                  {recompute.match
-                    ? "Recomputed value matches the stored hash — this record is authentic."
-                    : "Recomputed value differs from the stored hash — this record cannot be trusted."}
-                </p>
-              </div>
-            )}
-          </div>
-        </Collapsible>
+          )}
 
-        {/* WORM cross-check */}
-        {worm && (
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Actor">
+              <span className={mismatch ? "text-tamper" : ""}>
+                {actorName(event.actor)}
+              </span>
+              <div className="text-[11.5px] text-muted">{event.actor}</div>
+            </Field>
+            <Field label="Flagged">{event.flagged ? "Yes" : "No"}</Field>
+            <Field label="Timestamp">
+              <span className="font-mono text-[12px]">{fullStamp(event.ts)}</span>
+            </Field>
+            <Field label="Source IP">
+              <span className="font-mono text-[12px]">
+                {event.payload?.ip || "-"}
+              </span>
+            </Field>
+          </div>
+
           <Collapsible
-            title="WORM checkpoint cross-check"
-            defaultOpen={!worm.match}
+            title="Cryptographic proof"
+            defaultOpen={mismatch}
             badge={
-              worm.match ? (
-                <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-verified-weak px-2 py-0.5 text-[11px] font-medium text-verified">
-                  <CheckTick width={11} height={11} /> Sealed
-                </span>
-              ) : (
-                <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-tamper-weak px-2 py-0.5 text-[11px] font-medium text-tamper">
-                  <BreakGlyph width={11} height={11} /> Diverged
-                </span>
-              )
+              recompute ? (
+                recompute.match ? (
+                  <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-verified-weak px-2 py-0.5 text-[11px] font-medium text-verified">
+                    <CheckTick width={11} height={11} /> Match
+                  </span>
+                ) : (
+                  <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-tamper-weak px-2 py-0.5 text-[11px] font-medium text-tamper">
+                    <BreakGlyph width={11} height={11} /> Mismatch
+                  </span>
+                )
+              ) : null
             }
           >
-            <p className="mb-3 text-[12.5px] leading-snug text-secondary">
-              The Merkle root of the first {worm.checkpointCount} events is compared
-              against the immutable checkpoint sealed at write time.
-            </p>
             <div className="space-y-3">
               <div>
                 <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted">
-                  Live Merkle root
+                  Previous hash
                 </div>
-                <HashLine
-                  value={worm.liveRoot}
-                  onCopy={onCopy}
-                  diffAgainst={worm.match ? null : worm.checkpointRoot}
-                />
+                <HashLine value={event.prevHash} onCopy={onCopy} />
               </div>
               <div>
                 <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted">
-                  Sealed checkpoint root
+                  Stored hash
                 </div>
-                <HashLine value={worm.checkpointRoot} onCopy={onCopy} />
+                <HashLine value={event.hash} onCopy={onCopy} />
               </div>
+              {recompute && (
+                <div>
+                  <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted">
+                    Recomputed hash
+                  </div>
+                  <HashLine
+                    value={recompute.recomputed}
+                    onCopy={onCopy}
+                    diffAgainst={mismatch ? recompute.stored : null}
+                  />
+                  <p className="mt-1.5 text-[12px] text-secondary">
+                    {recompute.match
+                      ? "Recomputed value matches the stored hash — this record is authentic."
+                      : "Recomputed value differs from the stored hash — this record cannot be trusted."}
+                  </p>
+                </div>
+              )}
             </div>
           </Collapsible>
-        )}
-      </div>
-    </aside>
+
+          {worm && (
+            <Collapsible
+              title="WORM checkpoint cross-check"
+              defaultOpen={!worm.match}
+              badge={
+                worm.match ? (
+                  <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-verified-weak px-2 py-0.5 text-[11px] font-medium text-verified">
+                    <CheckTick width={11} height={11} /> Sealed
+                  </span>
+                ) : (
+                  <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-tamper-weak px-2 py-0.5 text-[11px] font-medium text-tamper">
+                    <BreakGlyph width={11} height={11} /> Diverged
+                  </span>
+                )
+              }
+            >
+              <p className="mb-3 text-[12.5px] leading-snug text-secondary">
+                The Merkle root of the first {worm.checkpointCount} events is
+                compared against the immutable checkpoint sealed at write time.
+              </p>
+              <div className="space-y-3">
+                <div>
+                  <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted">
+                    Live Merkle root
+                  </div>
+                  <HashLine
+                    value={worm.liveRoot}
+                    onCopy={onCopy}
+                    diffAgainst={worm.match ? null : worm.checkpointRoot}
+                  />
+                </div>
+                <div>
+                  <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted">
+                    Sealed checkpoint root
+                  </div>
+                  <HashLine value={worm.checkpointRoot} onCopy={onCopy} />
+                </div>
+              </div>
+            </Collapsible>
+          )}
+        </div>
+      </aside>
+    </div>
   );
 }

@@ -13,9 +13,12 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata = {
-  title: "LedgerLock — Audit Ledger Console",
+  title: {
+    default: "LedgerLock - Tamper-evident audit trail",
+    template: "%s · LedgerLock",
+  },
   description:
-    "Tamper-evident audit ledger console for compliance officers. Hash-chained events verified against WORM checkpoints.",
+    "Append-only audit logs with SHA-256 hash chains and WORM checkpoints on Amazon DynamoDB. Built for HIPAA, SOC2, and SEC-regulated SaaS.",
 };
 
 export const viewport = {
@@ -28,7 +31,9 @@ export default function RootLayout({ children }) {
       lang="en"
       className={`${geist.variable} ${plexMono.variable} h-full bg-canvas antialiased`}
     >
-      <body className="h-full bg-canvas font-sans text-primary">{children}</body>
+      <body className="h-full bg-canvas font-sans text-primary">
+        {children}
+      </body>
     </html>
   );
 }

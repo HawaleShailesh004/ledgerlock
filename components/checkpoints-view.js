@@ -14,7 +14,9 @@ import {
 
 function Card({ children, className = "" }) {
   return (
-    <section className={`rounded-2xl border border-line bg-surface p-5 shadow-card ${className}`}>
+    <section
+      className={`rounded-2xl border border-line bg-surface p-5 shadow-card ${className}`}
+    >
       {children}
     </section>
   );
@@ -106,12 +108,15 @@ export default function CheckpointsView({
                 How seals protect the ledger
               </h2>
               <p className="mt-1 text-[13px] leading-relaxed text-secondary">
-                Every {interval} events, LedgerLock computes a Merkle root over the
-                sealed range and writes it to{" "}
-                <span className="font-medium text-primary">write-once storage</span>.
-                Because the seal can never be rewritten, altering any earlier record
-                makes the recomputed root diverge from the sealed root — proving
-                tampering even if the attacker also rewrote the hash chain.
+                Every {interval} events, LedgerLock computes a Merkle root over
+                the sealed range and writes it to{" "}
+                <span className="font-medium text-primary">
+                  write-once storage
+                </span>
+                . Because the seal can never be rewritten, altering any earlier
+                record makes the recomputed root diverge from the sealed root -
+                proving tampering even if the attacker also rewrote the hash
+                chain.
               </p>
             </div>
           </div>
@@ -124,7 +129,8 @@ export default function CheckpointsView({
           {!crossChecked ? (
             <div className="mt-3 flex items-center gap-2 text-[13px] text-secondary">
               <ClockGlyph className="text-muted" />
-              Run verification to compare the live chain against the sealed root.
+              Run verification to compare the live chain against the sealed
+              root.
             </div>
           ) : (
             <div
@@ -134,7 +140,11 @@ export default function CheckpointsView({
             >
               <span className="mt-0.5 shrink-0">
                 {match ? (
-                  <ShieldCheck className="text-verified" width={18} height={18} />
+                  <ShieldCheck
+                    className="text-verified"
+                    width={18}
+                    height={18}
+                  />
                 ) : (
                   <ShieldAlert className="text-tamper" width={18} height={18} />
                 )}
@@ -145,7 +155,9 @@ export default function CheckpointsView({
                     match ? "text-verified" : "text-tamper"
                   }`}
                 >
-                  {match ? "Live root matches seal" : "Root mismatch — tampering detected"}
+                  {match
+                    ? "Live root matches seal"
+                    : "Root mismatch - tampering detected"}
                 </p>
                 <p className="mt-0.5 text-[12px] leading-snug text-secondary">
                   {match
@@ -176,7 +188,8 @@ export default function CheckpointsView({
                   Next seal at {seqLabel(nextBoundary)}
                 </div>
                 <div className="text-[12.5px] text-secondary">
-                  {sinceSeal} of {interval} events accumulated since the last seal
+                  {sinceSeal} of {interval} events accumulated since the last
+                  seal
                 </div>
               </div>
             </div>
@@ -213,8 +226,9 @@ export default function CheckpointsView({
                     Checkpoint {seqLabel(sealedCount)}
                   </div>
                   <div className="text-[12.5px] text-secondary">
-                    Sealed range {seqLabel(0)} – {seqLabel((checkpoint.lastSeq ?? sealedCount - 1))}{" "}
-                    · {sealedCount} events
+                    Sealed range {seqLabel(0)} –{" "}
+                    {seqLabel(checkpoint.lastSeq ?? sealedCount - 1)} ·{" "}
+                    {sealedCount} events
                   </div>
                 </div>
               </div>
@@ -226,7 +240,11 @@ export default function CheckpointsView({
                       : "bg-tamper-weak text-tamper"
                   }`}
                 >
-                  {match ? <CheckTick width={12} height={12} /> : <ShieldAlert width={12} height={12} />}
+                  {match ? (
+                    <CheckTick width={12} height={12} />
+                  ) : (
+                    <ShieldAlert width={12} height={12} />
+                  )}
                   {match ? "Verified" : "Mismatch"}
                 </span>
               ) : (
@@ -243,13 +261,21 @@ export default function CheckpointsView({
                 value={checkpoint.merkleRoot}
                 onCopy={onCopy}
               />
-              <HashLine label="Last sealed hash" value={checkpoint.lastHash} onCopy={onCopy} />
+              <HashLine
+                label="Last sealed hash"
+                value={checkpoint.lastHash}
+                onCopy={onCopy}
+              />
             </div>
 
             {crossChecked && (
               <div className="mt-3">
                 <HashLine
-                  label={match ? "Recomputed root (matches)" : "Recomputed root (differs)"}
+                  label={
+                    match
+                      ? "Recomputed root (matches)"
+                      : "Recomputed root (differs)"
+                  }
                   value={worm.liveRoot}
                 />
               </div>
@@ -266,8 +292,8 @@ export default function CheckpointsView({
               <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-2 text-muted">
                 <SealGlyph />
               </span>
-              No seals yet — the first WORM checkpoint is created once {interval} events
-              have been logged.
+              No seals yet - the first WORM checkpoint is created once{" "}
+              {interval} events have been logged.
             </div>
           </Card>
         )}
