@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { ShieldGlyph, LedgerGlyph, SealGlyph } from "./icons";
+import Logo from "./logo";
+import { SealGlyph } from "./icons";
 
 const LAYERS = [
   {
@@ -29,14 +30,9 @@ export default function LandingPage() {
     <div className="min-h-screen bg-canvas">
       <header className="border-b border-line bg-surface/80 backdrop-blur-sm">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent text-on-accent shadow-card">
-              <ShieldGlyph width={20} height={20} />
-            </span>
-            <span className="text-[17px] font-semibold tracking-tight text-primary">
-              LedgerLock
-            </span>
-          </div>
+          <Link href="/" className="transition-opacity hover:opacity-80">
+            <Logo variant="full" height={36} priority />
+          </Link>
           <Link
             href="/dashboard"
             className="rounded-lg bg-accent px-4 py-2 text-[13.5px] font-medium text-on-accent shadow-card transition-colors hover:bg-accent-hover"
@@ -49,6 +45,7 @@ export default function LandingPage() {
       <main>
         <section className="hero-wash border-b border-line">
           <div className="mx-auto max-w-6xl px-6 py-20 md:py-28">
+            <Logo variant="full" height={48} className="mb-8 md:h-14" priority />
             <p className="mb-4 text-[12px] font-medium uppercase tracking-[0.12em] text-muted">
               Tamper-evident audit trail · Amazon DynamoDB
             </p>
@@ -69,7 +66,9 @@ export default function LandingPage() {
                 href="/dashboard"
                 className="inline-flex items-center gap-2 rounded-lg bg-accent px-5 py-2.5 text-[14px] font-medium text-on-accent shadow-raised transition-colors hover:bg-accent-hover"
               >
-                <LedgerGlyph width={17} height={17} />
+                <span className="rounded-md bg-white/15 p-0.5">
+                  <Logo variant="icon" height={18} />
+                </span>
                 Launch audit console
               </Link>
               <a
@@ -188,13 +187,16 @@ export default function LandingPage() {
       </main>
 
       <footer className="bg-canvas">
-        <div className="mx-auto flex max-w-6xl flex-col items-start justify-between gap-4 px-6 py-8 md:flex-row md:items-center">
-          <p className="text-[13px] text-muted">
-            Built on Amazon DynamoDB · Single-table · Streams · S3 Object Lock
-          </p>
-          <p className="font-mono text-[12px] text-muted">
-            PutItem + Query ONLY · no Update · no Delete
-          </p>
+        <div className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-8 md:flex-row md:items-center md:justify-between">
+          <Logo variant="icon" height={40} />
+          <div className="flex flex-col gap-1 md:items-end">
+            <p className="text-[13px] text-muted">
+              Built on Amazon DynamoDB · Single-table · Streams · S3 Object Lock
+            </p>
+            <p className="font-mono text-[12px] text-muted">
+              PutItem + Query ONLY · no Update · no Delete
+            </p>
+          </div>
         </div>
       </footer>
     </div>

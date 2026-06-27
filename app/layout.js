@@ -19,6 +19,10 @@ export const metadata = {
   },
   description:
     "Append-only audit logs with SHA-256 hash chains and WORM checkpoints on Amazon DynamoDB. Built for HIPAA, SOC2, and SEC-regulated SaaS.",
+  icons: {
+    icon: [{ url: "/logo-icon.svg", type: "image/svg+xml" }],
+    apple: [{ url: "/logo-icon.svg", type: "image/svg+xml" }],
+  },
 };
 
 export const viewport = {

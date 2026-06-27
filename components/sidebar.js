@@ -1,13 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import {
-  ShieldGlyph,
-  LedgerGlyph,
-  ChartGlyph,
-  SealGlyph,
-  ChevronDown,
-} from "./icons";
+import Logo from "./logo";
+import { LedgerGlyph, ChartGlyph, SealGlyph, ChevronDown } from "./icons";
 
 const NAV = [
   { id: "overview", label: "Overview", Icon: ChartGlyph },
@@ -27,17 +22,10 @@ export default function Sidebar({
     <aside className="flex w-60 shrink-0 flex-col border-r border-line bg-surface">
       <Link
         href="/"
-        className="flex items-center gap-2.5 px-5 py-5 transition-opacity hover:opacity-80"
+        className="block px-5 py-5 transition-opacity hover:opacity-80"
       >
-        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-on-accent shadow-card">
-          <ShieldGlyph width={18} height={18} />
-        </span>
-        <div className="leading-tight">
-          <div className="text-[15px] font-semibold tracking-tight text-primary">
-            LedgerLock
-          </div>
-          <div className="text-[11px] text-muted">Compliance audit</div>
-        </div>
+        <Logo variant="full" height={28} className="max-w-full" priority />
+        <p className="mt-2 text-[11px] text-muted">Compliance audit</p>
       </Link>
 
       <nav className="flex flex-col gap-0.5 px-3 py-2">
