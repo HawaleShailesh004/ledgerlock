@@ -1,26 +1,243 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
+
+  /* Neutrals */
+  --color-canvas: #f4f6f8;
+  --color-surface: #ffffff;
+  --color-surface-2: #f9fafb;
+  --color-line: #e4e8ed;
+  --color-line-strong: #d4dae1;
+
+  /* Text */
+  --color-primary: #1a2230;
+  --color-secondary: #586273;
+  --color-muted: #8b95a4;
+
+  /* Brand accent — calm, trustworthy teal */
+  --color-accent: #0f7d6b;
+  --color-accent-hover: #0c6a5a;
+  --color-accent-weak: #e6f4f1;
+  --color-accent-soft: #d3ebe5;
+  --color-on-accent: #ffffff;
+
+  /* Functional status */
+  --color-verified: #15803d;
+  --color-verified-weak: #e7f5ec;
+  --color-flagged: #b45309;
+  --color-flagged-weak: #fbf0e1;
+  --color-tamper: #c1281f;
+  --color-tamper-weak: #fbe9e7;
+
+  --radius: 0.75rem;
+
+  /* Elevation */
+  --shadow-card: 0 1px 2px rgba(20, 30, 48, 0.04), 0 1px 3px rgba(20, 30, 48, 0.06);
+  --shadow-raised: 0 2px 4px rgba(20, 30, 48, 0.05), 0 6px 16px rgba(20, 30, 48, 0.08);
+  --shadow-pop: 0 8px 24px rgba(20, 30, 48, 0.12), 0 2px 6px rgba(20, 30, 48, 0.08);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-primary);
+    -webkit-font-smoothing: antialiased;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer utilities {
+  .shadow-card {
+    box-shadow: var(--shadow-card);
+  }
+  .shadow-raised {
+    box-shadow: var(--shadow-raised);
+  }
+  .shadow-pop {
+    box-shadow: var(--shadow-pop);
+  }
+  /* Restrained single-tint hero wash (teal -> transparent), never loud. */
+  .hero-wash {
+    background-image: radial-gradient(
+      120% 140% at 88% -10%,
+      var(--color-accent-weak) 0%,
+      color-mix(in srgb, var(--color-accent-weak) 30%, transparent) 38%,
+      transparent 70%
+    );
+  }
+  .hero-wash-verified {
+    background-image: radial-gradient(
+      120% 140% at 88% -10%,
+      var(--color-verified-weak) 0%,
+      color-mix(in srgb, var(--color-verified-weak) 30%, transparent) 40%,
+      transparent 72%
+    );
+  }
+  .hero-wash-tamper {
+    background-image: radial-gradient(
+      120% 140% at 88% -10%,
+      var(--color-tamper-weak) 0%,
+      color-mix(in srgb, var(--color-tamper-weak) 30%, transparent) 40%,
+      transparent 72%
+    );
+  }
+}
+
+/* Verify scan sweep highlight */
+@keyframes scanPulse {
+  0% {
+    background-color: var(--color-accent-soft);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+.animate-scan {
+  animation: scanPulse 0.7s ease-out forwards;
+}
+
+/* Fading trail left behind the scan cursor */
+@keyframes trailFade {
+  0% {
+    background-color: color-mix(in srgb, var(--color-accent-weak) 80%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+.animate-trail {
+  animation: trailFade 0.55s ease-out forwards;
+}
+
+/* Lock-in tick pop (spring) */
+@keyframes tickPop {
+  0% {
+    transform: scale(0.2);
+    opacity: 0;
+  }
+  55% {
+    transform: scale(1.25);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.animate-tick {
+  animation: tickPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+/* Completion lock pulse (ring flash on the whole panel/gauge) */
+@keyframes lockPulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-verified) 38%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 14px transparent;
+  }
+}
+.animate-lock {
+  animation: lockPulse 0.7s ease-out forwards;
+}
+
+/* Tamper cascade flash */
+@keyframes tamperFlash {
+  0% {
+    background-color: var(--color-tamper-weak);
+  }
+  60% {
+    background-color: var(--color-tamper-weak);
+  }
+  100% {
+    background-color: color-mix(in srgb, var(--color-tamper-weak) 45%, transparent);
+  }
+}
+.animate-tamper {
+  animation: tamperFlash 0.6s ease-out both;
+}
+
+/* New row entrance */
+@keyframes rowIn {
+  0% {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-row-in {
+  animation: rowIn 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* Drawer slide */
+@keyframes drawerIn {
+  0% {
+    transform: translateX(16px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+.animate-drawer {
+  animation: drawerIn 0.28s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* View fade-in */
+@keyframes viewIn {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-view {
+  animation: viewIn 0.38s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* Sparkline / gauge stroke draw */
+@keyframes drawLine {
+  0% {
+    stroke-dashoffset: var(--draw-len);
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+.animate-draw {
+  stroke-dasharray: var(--draw-len);
+  stroke-dashoffset: var(--draw-len);
+  animation: drawLine 1s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-scan,
+  .animate-trail,
+  .animate-tick,
+  .animate-lock,
+  .animate-tamper,
+  .animate-row-in,
+  .animate-drawer,
+  .animate-view,
+  .animate-draw {
+    animation: none !important;
+  }
+  .animate-draw {
+    stroke-dashoffset: 0 !important;
+  }
+}
+
+::selection {
+  background-color: var(--color-accent-weak);
 }
