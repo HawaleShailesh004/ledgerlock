@@ -1,24 +1,27 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { AnimatePresence } from "framer-motion";
-import Sidebar from "@/components/sidebar";
-import TopBar from "@/components/top-bar";
-import VerificationBanner from "@/components/verification-banner";
-import ChainTimeline from "@/components/chain-timeline";
-import AppendModal from "@/components/append-modal";
+import LeftRail from "@/components/left-rail";
+import StatusStrip from "@/components/status-strip";
+import ColumnHeader from "@/components/column-header";
+import LedgerColumn from "@/components/ledger-column";
+import Inspector from "@/components/inspector";
+import AppendPanel from "@/components/append-panel";
+import TelemetryBar from "@/components/telemetry-bar";
 import Toast from "@/components/toast";
 import {
   buildSeed,
+  buildCheckpoint,
   appendDemo,
   verifyDemo,
   tamperDemo,
+  recomputeRow,
 } from "@/lib/demo-ledger";
 
 const FALLBACK_TENANTS = [
-  { id: "acme", name: "Acme Health" },
-  { id: "northwind", name: "Northwind Bank" },
-  { id: "globex", name: "Globex Insurance" },
+  { id: "acme", label: "acme-health" },
+  { id: "northwind", label: "northwind-bank" },
+  { id: "globex", label: "globex-insurance" },
 ];
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -27,20 +30,24 @@ export default function Page() {
   const [tenants, setTenants] = useState(FALLBACK_TENANTS);
   const [tenant, setTenant] = useState(FALLBACK_TENANTS[0]);
   const [events, setEvents] = useState([]); // newest-first
-  const [status, setStatus] = useState("idle");
-  const [verifyCount, setVerifyCount] = useState(0);
+  const [checkpoint, setCheckpoint] = useState(null);
+  const [status, setStatus] = useState("idle"); // idle|verifying|verified|tamper
   const [brokenSeq, setBrokenSeq] = useState(null);
-  const [ripple, setRipple] = useState(false);
+  const [verifyResult, setVerifyResult] = useState(null); // raw verify response
+  const [selectedSeq, setSelectedSeq] = useState(null);
+  const [cursorSeq, setCursorSeq] = useState(null);
+  const [recompute, setRecompute] = useState(null);
+  const [worm, setWorm] = useState(null);
   const [newSeq, setNewSeq] = useState(null);
   const [appendOpen, setAppendOpen] = useState(false);
   const [toast, setToast] = useState("");
-  const [flashId, setFlashId] = useState(0);
   const [reduced, setReduced] = useState(false);
   const [demo, setDemo] = useState(false);
+  const [lastVerifyTs, setLastVerifyTs] = useState(null);
 
   const toastTimer = useRef(null);
-  // Demo ledger lives in memory, oldest-first, keyed by tenant id.
-  const demoStore = useRef({});
+  const demoStore = useRef({}); // tenantId -> oldest-first chain
+  const demoCheckpoints = useRef({}); // tenantId -> checkpoint
   const demoActive = useRef(false);
 
   // prefers-reduced-motion
@@ -68,19 +75,26 @@ export default function Page() {
     };
   }, []);
 
-  // Publish the in-memory demo chain (stored oldest-first) to the view (newest-first).
+  const showToast = useCallback((msg) => {
+    setToast(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(""), 1600);
+  }, []);
+
   const publishDemo = useCallback((tenantId) => {
     const chain = demoStore.current[tenantId] || [];
     setEvents([...chain].sort((a, b) => b.seq - a.seq));
+    setCheckpoint(demoCheckpoints.current[tenantId] || null);
   }, []);
 
-  // Lazily seed and activate the demo ledger for a tenant.
   const enterDemo = useCallback(
     async (tenantId) => {
       demoActive.current = true;
       setDemo(true);
       if (!demoStore.current[tenantId]) {
-        demoStore.current[tenantId] = await buildSeed(tenantId);
+        const seeded = await buildSeed(tenantId);
+        demoStore.current[tenantId] = seeded;
+        demoCheckpoints.current[tenantId] = await buildCheckpoint(seeded);
       }
       publishDemo(tenantId);
     },
@@ -91,21 +105,28 @@ export default function Page() {
     async (tenantId) => {
       setStatus("idle");
       setBrokenSeq(null);
-      setRipple(false);
+      setVerifyResult(null);
+      setWorm(null);
+      setSelectedSeq(null);
       try {
-        const res = await fetch(`/api/events?tenantId=${tenantId}`);
-        const data = await res.json();
+        const [evRes, cpRes] = await Promise.all([
+          fetch(`/api/events?tenantId=${tenantId}`),
+          fetch(`/api/checkpoint?tenantId=${tenantId}`).catch(() => null),
+        ]);
+        const data = await evRes.json();
         const items = Array.isArray(data?.items) ? data.items : [];
-        if (!res.ok || items.length === 0) {
-          // Backend unreachable or empty — fall back to the demo ledger.
+        if (!evRes.ok || items.length === 0) {
           await enterDemo(tenantId);
           return;
         }
         demoActive.current = false;
         setDemo(false);
-        // API returns oldest-first; show newest-first.
         items.sort((a, b) => b.seq - a.seq);
         setEvents(items);
+        if (cpRes) {
+          const cp = await cpRes.json().catch(() => null);
+          setCheckpoint(cp?.checkpoint || null);
+        }
       } catch {
         await enterDemo(tenantId);
       }
@@ -113,188 +134,252 @@ export default function Page() {
     [enterDemo]
   );
 
-  // Reload on tenant change
   useEffect(() => {
     loadEvents(tenant.id);
   }, [tenant, loadEvents]);
 
-  const showToast = useCallback((msg) => {
-    setToast(msg);
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(""), 1600);
-  }, []);
-
-  const handleCopyHash = useCallback(
+  const handleCopy = useCallback(
     (value) => {
       if (!value) return;
       navigator.clipboard?.writeText(value).then(
-        () => showToast("Hash copied to clipboard"),
-        () => showToast("Copy failed")
+        () => showToast("copied"),
+        () => showToast("copy failed")
       );
     },
     [showToast]
+  );
+
+  // Recompute the inspector's recompute view for a given seq from current data.
+  const refreshRecompute = useCallback(async (seq) => {
+    if (seq == null) {
+      setRecompute(null);
+      return;
+    }
+    const tid = tenantRef.current.id;
+    let chain;
+    if (demoActive.current) {
+      chain = [...(demoStore.current[tid] || [])];
+    } else {
+      chain = [...eventsRef.current].sort((a, b) => a.seq - b.seq);
+    }
+    const idx = chain.findIndex((e) => e.seq === seq);
+    if (idx < 0) {
+      setRecompute(null);
+      return;
+    }
+    const rc = await recomputeRow(chain, idx);
+    setRecompute(rc);
+  }, []);
+
+  // refs so the cursor callback always sees fresh data without re-subscribing
+  const eventsRef = useRef(events);
+  const tenantRef = useRef(tenant);
+  useEffect(() => {
+    eventsRef.current = events;
+  }, [events]);
+  useEffect(() => {
+    tenantRef.current = tenant;
+  }, [tenant]);
+
+  const handleCursorSeq = useCallback(
+    (seq) => {
+      setCursorSeq(seq);
+      setSelectedSeq(seq);
+      refreshRecompute(seq);
+    },
+    [refreshRecompute]
+  );
+
+  const handleSelect = useCallback(
+    (seq) => {
+      setSelectedSeq(seq);
+      refreshRecompute(seq);
+    },
+    [refreshRecompute]
   );
 
   const handleVerify = useCallback(async () => {
     if (status === "verifying") return;
     setStatus("verifying");
     setBrokenSeq(null);
-    setRipple(false);
+    setWorm(null);
     try {
+      const tid = tenant.id;
       const verifyReq = demoActive.current
-        ? verifyDemo(demoStore.current[tenant.id] || [])
-        : fetch("/api/verify", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ tenantId: tenant.id }),
-          }).then((r) => r.json());
+        ? verifyDemo(demoStore.current[tid] || [], demoCheckpoints.current[tid])
+        : Promise.all([
+            fetch("/api/verify", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ tenantId: tid }),
+            }).then((r) => r.json()),
+            fetch(`/api/checkpoint?tenantId=${tid}`)
+              .then((r) => r.json())
+              .catch(() => ({ checkpoint: null })),
+          ]).then(([v, c]) => {
+            if (c?.checkpoint) setCheckpoint(c.checkpoint);
+            return v;
+          });
 
-      const [res] = await Promise.all([
-        verifyReq,
-        delay(reduced ? 150 : 1150), // let the scan-bar walk the chain
-      ]);
+      const walkMs = reduced ? 120 : Math.max(900, events.length * 60 + 200);
+      const [res] = await Promise.all([verifyReq, delay(walkMs)]);
+      setVerifyResult(res);
+      setLastVerifyTs(new Date().toLocaleTimeString("en-US", { hour12: false }));
 
-      setVerifyCount(res?.count ?? events.length);
+      // Build WORM cross-check panel
+      const cp = demoActive.current ? demoCheckpoints.current[tid] : checkpoint;
+      if (cp && res?.liveRootAtBoundary) {
+        setWorm({
+          liveRoot: res.liveRootAtBoundary,
+          checkpointRoot: cp.merkleRoot,
+          checkpointCount: cp.count,
+          match: res.liveRootAtBoundary === cp.merkleRoot,
+        });
+      } else {
+        setWorm(null);
+      }
 
       if (res?.intact) {
         setStatus("verified");
-        setRipple(true);
-        const rippleMs = reduced ? 200 : events.length * 100 + 600;
-        setTimeout(() => setRipple(false), rippleMs);
       } else {
         const seq = res?.breaks?.[0]?.seq ?? null;
         setBrokenSeq(seq);
         setStatus("tamper");
-        setFlashId((n) => n + 1); // viewport red flash, once
+        setSelectedSeq(seq);
+        refreshRecompute(seq);
       }
     } catch {
       setStatus("idle");
-      showToast("Verification request failed");
+      showToast("verification request failed");
     }
-  }, [status, tenant, events.length, reduced, showToast]);
+  }, [status, tenant, events.length, reduced, checkpoint, showToast, refreshRecompute]);
 
   const handleAppend = useCallback(
     async ({ actor, action, flagged }) => {
+      const tid = tenant.id;
       if (demoActive.current) {
         const { events: next, seq } = await appendDemo(
-          tenant.id,
-          demoStore.current[tenant.id] || [],
+          tid,
+          demoStore.current[tid] || [],
           { actor, action, flagged }
         );
-        demoStore.current[tenant.id] = next;
+        demoStore.current[tid] = next;
         setStatus("idle");
         setBrokenSeq(null);
+        setWorm(null);
         setNewSeq(seq);
-        publishDemo(tenant.id);
-        showToast(`Event #${seq} appended`);
+        publishDemo(tid);
+        showToast(`event #${seq} appended`);
         setTimeout(() => setNewSeq(null), 1200);
         return;
       }
-
       const res = await fetch("/api/events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tenantId: tenant.id,
-          actor,
-          action,
-          payload: {},
-          flagged,
-        }),
+        body: JSON.stringify({ tenantId: tid, actor, action, payload: {}, flagged }),
       });
       const data = await res.json();
       if (!res.ok || data?.ok === false) {
-        showToast(data?.error || "Append failed");
+        showToast(data?.error || "append failed");
         throw new Error("append_failed");
       }
       setStatus("idle");
       setBrokenSeq(null);
+      setWorm(null);
       setNewSeq(data.seq);
-      await loadEvents(tenant.id);
-      showToast(`Event #${data.seq} appended`);
+      await loadEvents(tid);
+      showToast(`event #${data.seq} appended`);
       setTimeout(() => setNewSeq(null), 1200);
     },
     [tenant, loadEvents, showToast, publishDemo]
   );
 
-  // Demo-only: silently corrupt a mid-chain record so "Verify Chain" surfaces it.
   const handleTamper = useCallback(() => {
     if (!demoActive.current) return;
-    const { events: next } = tamperDemo(demoStore.current[tenant.id] || []);
-    demoStore.current[tenant.id] = next;
+    const tid = tenant.id;
+    const { events: next, seq } = tamperDemo(demoStore.current[tid] || []);
+    demoStore.current[tid] = next;
     setStatus("idle");
     setBrokenSeq(null);
-    setRipple(false);
-    publishDemo(tenant.id);
-    showToast("Record silently altered — run Verify Chain");
+    setWorm(null);
+    publishDemo(tid);
+    showToast(`record #${seq} silently altered — run Verify Chain`);
   }, [tenant, publishDemo, showToast]);
 
-  const merkleRoot = events[0]?.hash || "GENESIS";
+  const selectedEvent = events.find((e) => e.seq === selectedSeq) || null;
+  const checkpointCount = checkpoint?.count ?? null;
 
   return (
-    <div className="relative min-h-screen">
-      <Sidebar
-        tenants={tenants}
-        selectedTenant={tenant}
-        onTenantChange={setTenant}
-        merkleRoot={merkleRoot}
+    <div className="flex h-screen flex-col overflow-hidden bg-canvas">
+      <LeftRail
+        statusColor={
+          status === "tamper" ? "var(--color-tamper)" : "var(--color-steel)"
+        }
+        statusTitle={status === "tamper" ? "integrity breach" : "operational"}
       />
 
-      <main className="ml-[260px] min-h-screen">
-        <div className="mx-auto max-w-4xl px-10 py-8">
-          <TopBar
-            tenantName={tenant.name}
-            count={events.length}
-            onAppend={() => setAppendOpen(true)}
-            onVerify={handleVerify}
-            verifying={status === "verifying"}
-            demo={demo}
-            onTamper={handleTamper}
-          />
+      <div className="flex flex-1 flex-col overflow-hidden pl-16">
+        <StatusStrip
+          tenants={tenants}
+          tenant={tenant}
+          onTenantChange={setTenant}
+          count={events.length}
+          checkpointCount={checkpointCount}
+          status={status}
+          brokenSeq={brokenSeq}
+          onVerify={handleVerify}
+          verifying={status === "verifying"}
+        />
 
-          <div className="mt-6">
-            <AnimatePresence mode="wait">
-              <VerificationBanner
-                key={status}
+        <div className="flex flex-1 overflow-hidden">
+          {/* center ledger column — the dominant element */}
+          <main className="flex flex-1 flex-col overflow-hidden">
+            <ColumnHeader
+              onAppend={() => setAppendOpen(true)}
+              demo={demo}
+              onTamper={handleTamper}
+            />
+            <div className="flex-1 overflow-y-auto">
+              <LedgerColumn
+                events={events}
+                selectedSeq={selectedSeq}
+                newSeq={newSeq}
                 status={status}
-                count={verifyCount || events.length}
                 brokenSeq={brokenSeq}
                 reduced={reduced}
+                onSelect={handleSelect}
+                onCopyHash={handleCopy}
+                onCursorSeq={handleCursorSeq}
               />
-            </AnimatePresence>
-          </div>
+            </div>
+          </main>
 
-          <div className="mt-8">
-            <ChainTimeline
-              events={events}
-              reduced={reduced}
-              status={status}
-              brokenSeq={brokenSeq}
-              ripple={ripple}
-              newSeq={newSeq}
-              onCopyHash={handleCopyHash}
-            />
-          </div>
+          <Inspector
+            event={selectedEvent}
+            recompute={recompute}
+            worm={worm}
+            onCopy={handleCopy}
+            appendSlot={
+              <AppendPanel
+                open={appendOpen}
+                onClose={() => setAppendOpen(false)}
+                onSubmit={handleAppend}
+              />
+            }
+          />
         </div>
-      </main>
 
-      <AppendModal
-        open={appendOpen}
-        onClose={() => setAppendOpen(false)}
-        onSubmit={handleAppend}
-        reduced={reduced}
-      />
-
-      <Toast message={toast} reduced={reduced} />
-
-      {/* Viewport red flash on tamper — fires once per detection */}
-      {flashId > 0 && !reduced && (
-        <div
-          key={flashId}
-          className="tamper-flash pointer-events-none fixed inset-0 z-[55]"
-          aria-hidden="true"
+        <TelemetryBar
+          status={status}
+          count={events.length}
+          brokenSeq={brokenSeq}
+          checkpointCount={checkpointCount}
+          demo={demo}
+          lastVerifyTs={lastVerifyTs}
         />
-      )}
+      </div>
+
+      <Toast message={toast} />
     </div>
   );
 }

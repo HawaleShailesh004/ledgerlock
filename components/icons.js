@@ -1,106 +1,82 @@
-"use client";
+// Minimal, single-weight glyphs for the precision-instrument rail + chrome.
+// All accept className/props and inherit currentColor.
 
-export function ShieldIcon({ className = "", strokeWidth = 1.75 }) {
+function base(props) {
+  return {
+    width: 18,
+    height: 18,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.6,
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    ...props,
+  };
+}
+
+export function ShieldGlyph(props) {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={strokeWidth}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z" />
+    <svg {...base(props)} aria-hidden="true">
+      <path d="M12 3l7 3v5c0 4.4-3 7.4-7 9-4-1.6-7-4.6-7-9V6l7-3z" />
     </svg>
   );
 }
 
-export function LockIcon({ className = "", strokeWidth = 1.75 }) {
+export function LedgerGlyph(props) {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={strokeWidth}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <rect x="5" y="11" width="14" height="9" rx="2" />
-      <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+    <svg {...base(props)} aria-hidden="true">
+      <rect x="5" y="3" width="14" height="18" rx="1" />
+      <path d="M9 8h6M9 12h6M9 16h4" />
     </svg>
   );
 }
 
-export function PlusIcon({ className = "", strokeWidth = 1.75 }) {
+export function PulseGlyph(props) {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={strokeWidth}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="M12 5v14M5 12h14" />
+    <svg {...base(props)} aria-hidden="true">
+      <path d="M3 12h4l2-6 4 12 2-6h6" />
     </svg>
   );
 }
 
-export function ChevronDownIcon({ className = "", strokeWidth = 1.75 }) {
+export function ChevronDown(props) {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={strokeWidth}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
+    <svg {...base({ width: 14, height: 14, strokeWidth: 1.8, ...props })} aria-hidden="true">
       <path d="M6 9l6 6 6-6" />
     </svg>
   );
 }
 
-export function CopyIcon({ className = "", strokeWidth = 1.75 }) {
+export function CheckTick(props) {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={strokeWidth}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <rect x="9" y="9" width="11" height="11" rx="2" />
-      <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+    <svg {...base({ width: 14, height: 14, strokeWidth: 2, ...props })} aria-hidden="true">
+      <path d="M4 12l5 5L20 6" />
     </svg>
   );
 }
 
-export function AlertIcon({ className = "", strokeWidth = 1.75 }) {
+export function BreakGlyph(props) {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={strokeWidth}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-    >
-      <path d="M12 9v4M12 17h.01" />
-      <path d="M10.3 3.9 2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+    <svg {...base({ width: 14, height: 14, ...props })} aria-hidden="true">
+      <path d="M9 7L7 9a3 3 0 000 4l1 1M15 17l2-2a3 3 0 000-4l-1-1" />
+      <path d="M8 16l1.5-1.5M16 8l-1.5 1.5" />
+    </svg>
+  );
+}
+
+export function PlusGlyph(props) {
+  return (
+    <svg {...base({ width: 14, height: 14, strokeWidth: 1.8, ...props })} aria-hidden="true">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+export function ArrowDownRight(props) {
+  return (
+    <svg {...base({ width: 13, height: 13, ...props })} aria-hidden="true">
+      <path d="M7 7l10 10M17 9v8h-8" />
     </svg>
   );
 }

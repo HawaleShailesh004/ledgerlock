@@ -1,35 +1,34 @@
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { Geist, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({
-  variable: "--font-inter",
+const geist = Geist({
   subsets: ["latin"],
+  variable: "--font-geist",
 });
 
-const jetbrainsMono = JetBrains_Mono({
-  variable: "--font-jetbrains-mono",
+const plexMono = IBM_Plex_Mono({
   subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-plex-mono",
 });
 
 export const metadata = {
-  title: "LedgerLock · Audit Ledger",
+  title: "LedgerLock — Audit Ledger Console",
   description:
-    "Enterprise compliance dashboard for tamper-evident audit ledgers verified against WORM checkpoints.",
+    "Tamper-evident audit ledger console for compliance officers. Hash-chained events verified against WORM checkpoints.",
 };
 
 export const viewport = {
-  themeColor: "#09090b",
+  themeColor: "#0B0C0E",
 };
 
 export default function RootLayout({ children }) {
   return (
     <html
       lang="en"
-      className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased bg-zinc-950`}
+      className={`${geist.variable} ${plexMono.variable} h-full bg-canvas antialiased`}
     >
-      <body className="min-h-full bg-zinc-950 font-sans text-zinc-100">
-        {children}
-      </body>
+      <body className="h-full bg-canvas font-sans text-primary">{children}</body>
     </html>
   );
 }
