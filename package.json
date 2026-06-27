@@ -15,6 +15,7 @@
   "description": "",
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.1075.0",
+    "@aws-sdk/client-s3": "^3.1075.0",
     "@aws-sdk/lib-dynamodb": "^3.1075.0",
     "@tailwindcss/postcss": "^4.3.1",
     "framer-motion": "^12.42.0",

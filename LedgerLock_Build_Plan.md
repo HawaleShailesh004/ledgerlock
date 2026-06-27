@@ -113,18 +113,27 @@ That third layer is what turns "tamper-evident" into "tamper-evident *and provab
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "AppendAndReadOnly",
+      "Sid": "AppendAndReadOnlyDynamo",
       "Effect": "Allow",
       "Action": ["dynamodb:PutItem", "dynamodb:Query"],
       "Resource": [
         "arn:aws:dynamodb:ap-south-1:<ACCOUNT>:table/LedgerLock",
         "arn:aws:dynamodb:ap-south-1:<ACCOUNT>:table/LedgerLock/index/GSI1"
       ]
+    },
+    {
+      "Sid": "ReadOnlyWormCheckpoints",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:ListBucket"],
+      "Resource": [
+        "arn:aws:s3:::ledgerlock-worm-<same-name>",
+        "arn:aws:s3:::ledgerlock-worm-<same-name>/*"
+      ]
     }
   ]
 }
 ```
-Note what is **absent**: UpdateItem, DeleteItem, BatchWriteItem. That absence is the product.
+Note what is **absent**: on DynamoDB — UpdateItem, DeleteItem, BatchWriteItem. On S3 — PutObject, DeleteObject, and anything that could weaken Object Lock. The app can *read* the WORM checkpoint for the cross-check but can never write or alter it. That absence is the product. (When you add this S3 statement, re-run `aws iam create-policy`/`put-user-policy` — see §2.3 in the phase guide — and re-screenshot.)
 
 ### 4b. Lambda checkpointer role
 ```json
@@ -218,6 +227,23 @@ export function computeHash(eventWithoutHash, prevHash) {
     .update(canonical(eventWithoutHash) + prevHash)
     .digest("hex");
 }
+
+// Merkle root over an ordered list of leaf hashes.
+// Shared by the verifier (live root) and the Lambda checkpointer (WORM root)
+// so both compute it IDENTICALLY — otherwise the cross-check would always "diverge".
+export function merkleRoot(hashes) {
+  if (hashes.length === 0) return crypto.createHash("sha256").update("EMPTY").digest("hex");
+  let level = hashes;
+  while (level.length > 1) {
+    const next = [];
+    for (let i = 0; i < level.length; i += 2) {
+      const a = level[i], b = level[i + 1] ?? level[i]; // duplicate last if odd
+      next.push(crypto.createHash("sha256").update(a + b).digest("hex"));
+    }
+    level = next;
+  }
+  return level[0];
+}
 ```
 
 ### 6.2 Append endpoint — `app/api/events/route.js` (POST)
@@ -283,13 +309,16 @@ export async function POST(req) {
 > **Concurrency design (put this in the writeup — it's a scoring point):** Because the SK is the sequence number, two simultaneous appends both target `EVENT#0000000006`. DynamoDB's conditional write guarantees exactly one succeeds; the other catches `ConditionalCheckFailedException`, re-reads the now-advanced tail, recomputes its hash against the real new `prevHash`, and writes `EVENT#0000000007`. That is **optimistic concurrency control implemented natively on a single conditional write** — no locks, no queue — and it's what keeps the cryptographic chain strictly linear and fork-free. State the one tradeoff openly: strictly increasing keys put a tenant's writes on one partition boundary; fine for audit-log rates, and naming it signals engine fluency to this panel.
 
 ### 6.3 Verify endpoint — `app/api/verify/route.js` (POST)
+
+Returns three things the UI needs: pass/fail + the broken `seq` (for the cascade), and the **live Merkle root computed at the latest checkpoint boundary** so the UI can compare it against the independent WORM root from S3 (the `/api/checkpoint` route below). Computing the live root at the *same boundary* the Lambda used is what makes the comparison valid — compare root-of-first-30 to checkpoint-30, not root-of-all-32.
 ```js
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
-import { computeHash } from "@/lib/chain";
+import { computeHash, merkleRoot } from "@/lib/chain";
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({ region: "ap-south-1" }));
 const TABLE = "LedgerLock";
+const CHECKPOINT_EVERY = 10;   // must match the Lambda's cadence
 
 export async function POST(req) {
   const { tenantId } = await req.json();
@@ -315,10 +344,26 @@ export async function POST(req) {
     prevHash = hash;                                     // walk forward using STORED hash
     expectedSeq = it.seq + 1;
   }
-  return Response.json({ intact: breaks.length === 0, count: res.Items.length, breaks });
+
+  // Live Merkle root at the latest checkpoint boundary (same prefix the Lambda checkpointed),
+  // computed over the CURRENT (possibly tampered) stored hashes — so a tamper makes it diverge.
+  const n = res.Items.length;
+  const boundary = Math.floor(n / CHECKPOINT_EVERY) * CHECKPOINT_EVERY;
+  const liveRootAtBoundary =
+    boundary > 0 ? merkleRoot(res.Items.slice(0, boundary).map(i => i.hash)) : null;
+
+  return Response.json({
+    intact: breaks.length === 0,
+    count: n,
+    breaks,
+    boundary,                 // which checkpoint the UI should fetch (e.g. 30)
+    liveRootAtBoundary,       // recomputed from live data; compare to the WORM root
+  });
 }
 ```
-This returns the exact `seq`/`SK` of the first tampered event — that's what the UI lights up red. The `seqOk` check is what would catch a fork (two items claiming the same seq) or a deletion gap, on top of hash tampering.
+This returns the exact `seq`/`SK` of the first tampered event (UI cascade) **and** the live root for the WORM cross-check. The `seqOk` check catches a fork or deletion gap on top of hash tampering.
+
+> **Why root-at-boundary, not root-of-everything:** the Lambda writes a checkpoint at each multiple of 10 (e.g. it has a WORM root for the first 30 events). To compare apples to apples, the verifier recomputes the live root over the *same first 30* — `Math.floor(n/10)*10`. If those 30 are untouched the roots match; if any of them was tampered, the live root diverges from the immutable WORM root, which is the proof a database admin can't forge. (Events 31–32 beyond the boundary simply aren't checkpointed yet — that's expected, not a failure.)
 
 > **Field-consistency rule (gets people every time):** the appender hashes `base` = everything except `hash`/`GSI1PK`/`GSI1SK`. The verifier must strip *exactly* those same three and hash everything else — including `ts`. If the two sides disagree on which fields are hashed, a clean chain will falsely report "tampered." Keep them in lockstep.
 
@@ -335,7 +380,10 @@ const TABLE = "LedgerLock";
 const BUCKET = process.env.WORM_BUCKET;
 const CHECKPOINT_EVERY = 10;            // checkpoint at every 10-event boundary
 
-// Merkle root over an ordered list of leaf hashes
+// Merkle root over an ordered list of leaf hashes.
+// ⚠ This MUST be byte-identical to merkleRoot() in lib/chain.js (used by the verifier).
+// The Lambda is a separate deploy package so it can't import from @/lib — keep the two
+// copies in sync, or the live-vs-WORM root cross-check will always falsely "diverge".
 function merkleRoot(hashes) {
   if (hashes.length === 0) return crypto.createHash("sha256").update("EMPTY").digest("hex");
   let level = hashes;
@@ -412,18 +460,53 @@ aws lambda create-event-source-mapping \
   --region ap-south-1
 ```
 
+### 6.5 Checkpoint read endpoint — `app/api/checkpoint/route.js` (GET)
+Reads the latest WORM checkpoint object from S3 so the UI can show the **independent, immutable** Merkle root next to the live one. This is the half of the originality story that the new UI *shows* instead of just telling.
+```js
+import { S3Client, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
+
+const s3 = new S3Client({
+  region: "ap-south-1",
+  credentials: {
+    accessKeyId: process.env.LL_ACCESS_KEY_ID,
+    secretAccessKey: process.env.LL_SECRET_ACCESS_KEY,
+  },
+});
+const BUCKET = process.env.WORM_BUCKET;
+
+export async function GET(req) {
+  const tenantId = new URL(req.url).searchParams.get("tenantId");
+  const prefix = `TENANT_${tenantId}/`;
+
+  // list checkpoints for this tenant, pick the highest boundary
+  const list = await s3.send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix }));
+  const keys = (list.Contents || []).map(o => o.Key)
+    .filter(k => k.endsWith(".json"))
+    // checkpoint-<boundary>.json -> sort by boundary numerically
+    .sort((a, b) => Number(b.match(/checkpoint-(\d+)\.json/)?.[1] || 0)
+                  - Number(a.match(/checkpoint-(\d+)\.json/)?.[1] || 0));
+  if (keys.length === 0) return Response.json({ checkpoint: null });
+
+  const obj = await s3.send(new GetObjectCommand({ Bucket: BUCKET, Key: keys[0] }));
+  const body = await obj.Body.transformToString();
+  return Response.json({ checkpoint: JSON.parse(body) }); // { tenant, count, lastSeq, lastHash, merkleRoot, ts }
+}
+```
+**The UI cross-check:** call `/api/verify` (returns `liveRootAtBoundary` + `boundary`) and `/api/checkpoint` (returns the WORM `merkleRoot` at its `count`). When the two boundaries match and the roots are equal → green "matches WORM checkpoint." After a tamper inside the checkpointed prefix, `liveRootAtBoundary` changes but the WORM `merkleRoot` cannot (Object Lock) → they diverge, and that's the un-forgeable proof.
+
+> **IAM note:** this route needs S3 read on the bucket. The app user's policy is append-only on *DynamoDB*; grant it `s3:GetObject` + `s3:ListBucket` on the WORM bucket only (read, never write/delete — the app must never be able to weaken the WORM layer). See §4a update below.
+
 ---
 
 ## 7. The frontend (v0 prompt + design intent)
 
-**v0 prompt to start:**
-> "Build a compliance audit dashboard in Next.js + Tailwind. Left sidebar: a tenant switcher (dropdown). Main panel: a vertical 'chain' of audit events rendered as connected blocks (like a blockchain), each showing timestamp, actor, action, and a short hash; consecutive blocks joined by a link line. A green shield badge 'Chain intact' at top, which turns into a red broken-link badge when verification fails, with the broken block highlighted red. A 'Verify Chain' button and an 'Append test event' form. Minimal, serious, enterprise-security aesthetic — slate/zinc with a single emerald accent for 'verified' and red for 'tampered'."
+**Use the full "instrument" design system and v0 prompt in the Phase-By-Phase Build Guide (Phase 7).** That is the current, committed UI direction — a dark precision-instrument console (warm-black canvas, steel-cyan verified accent, signal `#FF5A3C` reserved for tamper, Geist + IBM Plex Mono, three-zone terminal layout, visible recompute walk, live-vs-WORM root cross-check). The short prompt that used to live here was the early generic version and has been superseded; don't use slate/zinc + emerald + Inter.
 
 **Design-to-data binding (the "design in deliberate relation to the back end" rubric line):**
-- The chain visualization *is* the SK ordering + hash links rendered literally.
+- The chain spine *is* the seq-ordered keys + hash links rendered literally.
 - Switching tenants visibly re-scopes everything → the partition key made visible.
-- The verify badge maps 1:1 to the `/api/verify` response; the red block is the returned `breaks[0].seq`.
-- A small "WORM checkpoint: ✓ matches" line maps to the latest S3 checkpoint vs recomputed Merkle root.
+- The verify cursor-walk *is* the verifier running; the broken row is `breaks[0].seq`.
+- The live-vs-WORM root panel maps to `/api/verify`.`liveRootAtBoundary` vs `/api/checkpoint`.`merkleRoot` — the S3 Object Lock guarantee made visible.
 
 ---
 

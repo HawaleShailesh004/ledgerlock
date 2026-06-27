@@ -9,6 +9,15 @@
           "arn:aws:dynamodb:ap-south-1:664418996303:table/LedgerLock",
           "arn:aws:dynamodb:ap-south-1:664418996303:table/LedgerLock/index/GSI1"
         ]
+      },
+      {
+        "Sid": "ReadOnlyWormCheckpoints",
+        "Effect": "Allow",
+        "Action": ["s3:GetObject", "s3:ListBucket"],
+        "Resource": [
+          "arn:aws:s3:::ledgerlock-worm-shailesh-664418996303",
+          "arn:aws:s3:::ledgerlock-worm-shailesh-664418996303/*"
+        ]
       }
     ]
   }
