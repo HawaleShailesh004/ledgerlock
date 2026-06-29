@@ -26,6 +26,11 @@ import {
   LedgerGlyph,
 } from "./icons";
 import ConfidenceGauge from "./confidence-gauge";
+import {
+  tamperSummary,
+  tamperGaugeDisplay,
+  verifyGaugeLabel,
+} from "@/lib/tamper-stats";
 
 const ACTION_COLORS = {
   PHI_READ: "var(--color-accent)",
@@ -97,30 +102,47 @@ function ChartTip({ active, payload, label, unit = "events" }) {
 export default function OverviewView({
   tenantLabel,
   metrics,
+  totalEventCount,
   events,
   checkpointCount,
   status,
   brokenSeq,
   verifying,
+  verifyProgress,
   onVerify,
+  onCancelVerify,
   onOpenLedger,
 }) {
   const tampered = status === "tamper";
   const verified = status === "verified";
   const recent = events.slice(0, 6);
+  const chainTotal = totalEventCount ?? metrics.total;
+  const breach = tampered ? tamperSummary(brokenSeq, chainTotal) : null;
 
   const gauge = verifying
-    ? { tone: "accent", value: "…", label: "Scanning", pct: 30, spinning: true }
+    ? (() => {
+        const live = verifyProgress;
+        const liveTotal = live?.total ?? chainTotal;
+        const liveVerified = live?.verified ?? 0;
+        const pct = liveTotal
+          ? Math.min(100, Math.round((liveVerified / liveTotal) * 100))
+          : 30;
+        return {
+          tone: "accent",
+          value: live ? `${pct}%` : "…",
+          label: verifyGaugeLabel(live?.phase),
+          pct,
+          spinning: live?.phase !== "done",
+          compact: true,
+        };
+      })()
     : verified
-      ? { tone: "verified", value: "100%", label: "Integrity", pct: 100 }
-      : tampered
-        ? {
-            tone: "tamper",
-            value: `${metrics.total ? Math.round(((brokenSeq ?? 0) / metrics.total) * 100) : 0}%`,
-            label: "Integrity",
-            pct: metrics.total ? Math.round(((brokenSeq ?? 0) / metrics.total) * 100) : 0,
-          }
-        : { tone: "accent", value: "Ready", label: "to verify", pct: 100 };
+      ? { tone: "verified", value: "100%", label: "Integrity", pct: 100, compact: false }
+      : tampered && breach
+        ? { tone: "tamper", ...tamperGaugeDisplay(breach), compact: false }
+        : tampered
+          ? { tone: "tamper", value: "!", label: "breach", pct: 0, compact: false }
+        : { tone: "accent", value: "Ready", label: "to verify", pct: 0, compact: false };
 
   const totalActions = metrics.actionDistribution.reduce((s, d) => s + d.value, 0) || 1;
 
@@ -137,23 +159,32 @@ export default function OverviewView({
             <span className="font-medium text-primary">{tenantLabel}</span>
           </p>
         </div>
-        <button
-          type="button"
-          onClick={onVerify}
-          disabled={verifying}
-          className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-[13.5px] font-semibold text-on-accent shadow-raised transition-all hover:bg-accent-hover active:scale-[0.98] disabled:cursor-progress disabled:opacity-70"
-        >
-          <CheckTick width={16} height={16} />
-          {verifying ? "Verifying…" : "Verify integrity"}
-        </button>
+        {verifying ? (
+          <button
+            type="button"
+            onClick={onCancelVerify}
+            className="flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-[13.5px] font-semibold text-primary shadow-raised transition-all hover:bg-surface-2"
+          >
+            Cancel verify
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onVerify}
+            className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-[13.5px] font-semibold text-on-accent shadow-raised transition-all hover:bg-accent-hover active:scale-[0.98]"
+          >
+            <CheckTick width={16} height={16} />
+            Verify integrity
+          </button>
+        )}
       </div>
 
       {/* KPIs */}
       <div className="mt-6 grid grid-cols-2 gap-4 xl:grid-cols-4">
         <KpiCard
           label="Total events"
-          value={metrics.total}
-          sub={`${metrics.actorCount} distinct accounts`}
+          value={chainTotal}
+          sub={`${metrics.actorCount} distinct accounts (loaded sample)`}
           icon={<LedgerGlyph className="text-accent" width={16} height={16} />}
         />
         <KpiCard
@@ -309,6 +340,7 @@ export default function OverviewView({
               value={gauge.value}
               label={gauge.label}
               spinning={gauge.spinning}
+              compact={gauge.compact}
               size={128}
             />
             <div
@@ -325,11 +357,13 @@ export default function OverviewView({
               ) : (
                 <ShieldCheck width={15} height={15} />
               )}
-              {tampered
-                ? `Breach at #${String(brokenSeq).padStart(4, "0")}`
-                : verified
-                  ? "All records intact"
-                  : "Run verification to confirm"}
+              {tampered && breach
+                ? `1 tampered · ${breach.invalidated.toLocaleString()} invalidated`
+                : tampered
+                  ? `Breach at #${String(brokenSeq).padStart(4, "0")}`
+                  : verified
+                    ? "All records intact"
+                    : "Run verification to confirm"}
             </div>
           </div>
         </Card>

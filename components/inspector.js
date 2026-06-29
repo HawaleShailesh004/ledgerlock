@@ -71,7 +71,7 @@ function Collapsible({ title, defaultOpen = false, badge, children }) {
   );
 }
 
-export default function Inspector({ event, recompute, worm, onCopy, onClose }) {
+export default function Inspector({ event, recompute, worm, proof, onCopy, onClose }) {
   useEffect(() => {
     if (!event) return;
     const onKey = (e) => e.key === "Escape" && onClose?.();
@@ -236,6 +236,53 @@ export default function Inspector({ event, recompute, worm, onCopy, onClose }) {
                   </div>
                   <HashLine value={worm.checkpointRoot} onCopy={onCopy} />
                 </div>
+              </div>
+            </Collapsible>
+          )}
+
+          {proof && !proof.error && (
+            <Collapsible
+              title="Merkle inclusion proof"
+              defaultOpen={false}
+              badge={
+                proof.proofValid ? (
+                  <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-verified-weak px-2 py-0.5 text-[11px] font-medium text-verified">
+                    <CheckTick width={11} height={11} /> Valid
+                  </span>
+                ) : proof.proofValid === false ? (
+                  <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-tamper-weak px-2 py-0.5 text-[11px] font-medium text-tamper">
+                    <BreakGlyph width={11} height={11} /> Invalid
+                  </span>
+                ) : null
+              }
+            >
+              <p className="mb-3 text-[12.5px] leading-snug text-secondary">
+                Proves event #{proof.seq} is included in checkpoint boundary{" "}
+                {proof.boundary} without revealing sibling events.
+              </p>
+              <div className="space-y-3">
+                <div>
+                  <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted">
+                    Leaf hash (this event)
+                  </div>
+                  <HashLine value={proof.leaf} onCopy={onCopy} />
+                </div>
+                {proof.siblings?.map((s, i) => (
+                  <div key={i}>
+                    <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted">
+                      Sibling {i + 1} ({s.position})
+                    </div>
+                    <HashLine value={s.hash} onCopy={onCopy} />
+                  </div>
+                ))}
+                {proof.checkpointRoot && (
+                  <div>
+                    <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted">
+                      Sealed root
+                    </div>
+                    <HashLine value={proof.checkpointRoot} onCopy={onCopy} />
+                  </div>
+                )}
               </div>
             </Collapsible>
           )}

@@ -33,12 +33,20 @@ export default function LandingPage() {
           <Link href="/" className="transition-opacity hover:opacity-80">
             <Logo variant="full" height={36} priority />
           </Link>
-          <Link
-            href="/dashboard"
-            className="rounded-lg bg-accent px-4 py-2 text-[13.5px] font-medium text-on-accent shadow-card transition-colors hover:bg-accent-hover"
-          >
-            Open console
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link
+              href="/integrate"
+              className="rounded-lg border border-line bg-surface px-4 py-2 text-[13.5px] font-medium text-secondary transition-colors hover:text-primary"
+            >
+              Integration demo
+            </Link>
+            <Link
+              href="/dashboard"
+              className="rounded-lg bg-accent px-4 py-2 text-[13.5px] font-medium text-on-accent shadow-card transition-colors hover:bg-accent-hover"
+            >
+              Open console
+            </Link>
+          </div>
         </div>
       </header>
 
@@ -70,6 +78,12 @@ export default function LandingPage() {
                   <Logo variant="icon" height={18} />
                 </span>
                 Launch audit console
+              </Link>
+              <Link
+                href="/integrate"
+                className="rounded-lg border border-line bg-surface px-5 py-2.5 text-[14px] font-medium text-secondary transition-colors hover:border-line-strong hover:text-primary"
+              >
+                Integration demo
               </Link>
               <a
                 href="#architecture"

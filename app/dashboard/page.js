@@ -8,6 +8,11 @@ import LedgerList from "@/components/ledger-list";
 import Inspector from "@/components/inspector";
 import OverviewView from "@/components/overview-view";
 import CheckpointsView from "@/components/checkpoints-view";
+import AlertsView from "@/components/alerts-view";
+import SealStatusBar from "@/components/seal-status-bar";
+import VerifyProgressBar from "@/components/verify-progress-bar";
+import TamperLegend from "@/components/tamper-legend";
+import TablePagination, { PAGE_SIZE_OPTIONS } from "@/components/table-pagination";
 import AppendModal from "@/components/append-modal";
 import Toast from "@/components/toast";
 import { BreakGlyph } from "@/components/icons";
@@ -20,15 +25,60 @@ import {
   recomputeRow,
 } from "@/lib/demo-ledger";
 import { computeMetrics } from "@/lib/metrics";
+import { tamperSummary } from "@/lib/tamper-stats";
 import { downloadComplianceReport } from "@/lib/export-report";
 
 const FALLBACK_TENANTS = [
   { id: "acme", label: "acme-health" },
   { id: "northwind", label: "northwind-bank" },
   { id: "globex", label: "globex-insurance" },
+  { id: "scale-test", label: "scale-test (10k)" },
+  { id: "scale-100k", label: "scale-100k (100k)" },
 ];
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function verifyWithStream(tenantId, signal, onProgress) {
+  const res = await fetch("/api/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tenantId, mode: "since-seal", stream: true }),
+    signal,
+  });
+  if (!res.ok) throw new Error("verify_failed");
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let result = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const parts = buf.split("\n\n");
+    buf = parts.pop() ?? "";
+    for (const part of parts) {
+      const line = part.trim();
+      if (!line.startsWith("data: ")) continue;
+      const msg = JSON.parse(line.slice(6));
+      if (msg.type === "progress") {
+        onProgress({
+          phase: msg.phase,
+          verified: msg.verified,
+          total: msg.total,
+          label: msg.label,
+        });
+      } else if (msg.type === "done") {
+        result = msg.result;
+      } else if (msg.type === "error") {
+        throw new Error(msg.message || "verify_failed");
+      }
+    }
+  }
+  if (!result) throw new Error("verify_incomplete");
+  return result;
+}
 
 export default function DashboardPage() {
   const [tenants, setTenants] = useState(FALLBACK_TENANTS);
@@ -38,6 +88,7 @@ export default function DashboardPage() {
   const [status, setStatus] = useState("idle"); // idle|verifying|verified|tamper
   const [brokenSeq, setBrokenSeq] = useState(null);
   const [verifyResult, setVerifyResult] = useState(null);
+  const [verifyProgress, setVerifyProgress] = useState(null);
   const [selectedSeq, setSelectedSeq] = useState(null);
   const [recompute, setRecompute] = useState(null);
   const [worm, setWorm] = useState(null);
@@ -48,6 +99,12 @@ export default function DashboardPage() {
   const [demo, setDemo] = useState(false);
   const [lastVerifyTs, setLastVerifyTs] = useState(null);
   const [view, setView] = useState("overview");
+  const [pageSize, setPageSize] = useState(50);
+  const [pageIndex, setPageIndex] = useState(0);
+  const [pageLoading, setPageLoading] = useState(false);
+  const [eventProof, setEventProof] = useState(null);
+  const [sealStatus, setSealStatus] = useState(null);
+  const [totalEventCount, setTotalEventCount] = useState(null);
 
   // Filters
   const [query, setQuery] = useState("");
@@ -60,12 +117,24 @@ export default function DashboardPage() {
   const demoActive = useRef(false);
   const eventsRef = useRef(events);
   const tenantRef = useRef(tenant);
+  const verifyAbortRef = useRef(null);
+  const pageSizeRef = useRef(pageSize);
+  const totalEventCountRef = useRef(totalEventCount);
+
+  useEffect(() => {
+    pageSizeRef.current = pageSize;
+  }, [pageSize]);
+  useEffect(() => {
+    totalEventCountRef.current = totalEventCount;
+  }, [totalEventCount]);
 
   useEffect(() => {
     eventsRef.current = events;
   }, [events]);
   useEffect(() => {
     tenantRef.current = tenant;
+    verifyAbortRef.current?.abort();
+    verifyAbortRef.current = null;
   }, [tenant]);
 
   useEffect(() => {
@@ -99,11 +168,53 @@ export default function DashboardPage() {
     toastTimer.current = setTimeout(() => setToast(""), 1800);
   }, []);
 
-  const publishDemo = useCallback((tenantId) => {
+  const handleCancelVerify = useCallback(() => {
+    verifyAbortRef.current?.abort();
+    verifyAbortRef.current = null;
+    setStatus("idle");
+    setVerifyProgress(null);
+    showToast("Verification cancelled");
+  }, [showToast]);
+
+  const publishDemo = useCallback((tenantId, page = 0) => {
     const chain = demoStore.current[tenantId] || [];
-    setEvents([...chain].sort((a, b) => b.seq - a.seq));
+    const size = pageSizeRef.current;
+    const from = page * size;
+    const slice = [...chain]
+      .sort((a, b) => a.seq - b.seq)
+      .slice(from, from + size)
+      .sort((a, b) => b.seq - a.seq);
+    setEvents(slice);
+    setPageIndex(page);
     setCheckpoint(demoCheckpoints.current[tenantId] || null);
+    setTotalEventCount(chain.length);
   }, []);
+
+  const fetchEventsPage = useCallback(
+    async (tenantId, page, size = pageSizeRef.current) => {
+      setPageLoading(true);
+      try {
+        if (demoActive.current) {
+          publishDemo(tenantId, page);
+          return;
+        }
+        const fromSeq = page * size;
+        const res = await fetch(
+          `/api/events?tenantId=${encodeURIComponent(tenantId)}&limit=${size}&fromSeq=${fromSeq}`,
+        );
+        const data = await res.json();
+        const items = Array.isArray(data?.items) ? data.items : [];
+        items.sort((a, b) => b.seq - a.seq);
+        setEvents(items);
+        setPageIndex(page);
+      } catch {
+        showToast("Failed to load events");
+      } finally {
+        setPageLoading(false);
+      }
+    },
+    [publishDemo, showToast],
+  );
 
   const enterDemo = useCallback(
     async (tenantId) => {
@@ -119,22 +230,61 @@ export default function DashboardPage() {
     [publishDemo],
   );
 
+  const fetchTenantStats = useCallback(async (tenantId) => {
+    if (demoActive.current) {
+      const n = demoStore.current[tenantId]?.length ?? 0;
+      const cp = demoCheckpoints.current[tenantId];
+      const sealed = cp?.count ?? 0;
+      setTotalEventCount(n);
+      setSealStatus({
+        totalEvents: n,
+        sealedThrough: sealed,
+        pendingSeal: Math.max(0, n - sealed),
+        status: n - sealed > 10 ? "behind" : n - sealed > 0 ? "catching-up" : "caught-up",
+      });
+      return n;
+    }
+    try {
+      const res = await fetch(
+        `/api/tenant-stats?tenantId=${encodeURIComponent(tenantId)}`,
+      );
+      const data = await res.json();
+      if (res.ok && data?.totalEvents != null) {
+        setSealStatus(data);
+        setTotalEventCount(data.totalEvents);
+        return data.totalEvents;
+      }
+    } catch {
+      setSealStatus(null);
+    }
+    return null;
+  }, []);
+
   const loadEvents = useCallback(
     async (tenantId) => {
       setStatus("idle");
       setBrokenSeq(null);
       setVerifyResult(null);
+      setVerifyProgress(null);
       setWorm(null);
       setSelectedSeq(null);
+      setSealStatus(null);
+      setTotalEventCount(null);
+      setPageIndex(0);
+      const size = pageSizeRef.current;
       try {
-        const [evRes, cpRes] = await Promise.all([
-          fetch(`/api/events?tenantId=${tenantId}`),
+        const [evRes, cpRes, statsRes] = await Promise.all([
+          fetch(
+            `/api/events?tenantId=${tenantId}&limit=${size}&fromSeq=0`,
+          ),
           fetch(`/api/checkpoint?tenantId=${tenantId}`).catch(() => null),
+          fetch(`/api/tenant-stats?tenantId=${tenantId}`).catch(() => null),
         ]);
         const data = await evRes.json();
         const items = Array.isArray(data?.items) ? data.items : [];
         if (!evRes.ok || items.length === 0) {
           await enterDemo(tenantId);
+          publishDemo(tenantId, 0);
           return;
         }
         demoActive.current = false;
@@ -145,12 +295,51 @@ export default function DashboardPage() {
           const cp = await cpRes.json().catch(() => null);
           setCheckpoint(cp?.checkpoint || null);
         }
+        if (statsRes) {
+          const stats = await statsRes.json().catch(() => null);
+          if (stats?.totalEvents != null) {
+            setSealStatus(stats);
+            setTotalEventCount(stats.totalEvents);
+          }
+        }
       } catch {
         await enterDemo(tenantId);
       }
     },
-    [enterDemo],
+    [enterDemo, publishDemo],
   );
+
+  const handlePageSizeChange = useCallback(
+    (size) => {
+      setPageSize(size);
+      pageSizeRef.current = size;
+      setPageIndex(0);
+      fetchEventsPage(tenantRef.current.id, 0, size);
+    },
+    [fetchEventsPage],
+  );
+
+  const handlePagePrev = useCallback(() => {
+    if (pageIndex <= 0 || pageLoading) return;
+    fetchEventsPage(tenantRef.current.id, pageIndex - 1);
+  }, [pageIndex, pageLoading, fetchEventsPage]);
+
+  const handlePageNext = useCallback(() => {
+    if (pageLoading) return;
+    const total = totalEventCountRef.current;
+    const size = pageSizeRef.current;
+    const totalPages = total ? Math.ceil(total / size) : null;
+    if (totalPages != null && pageIndex >= totalPages - 1) return;
+    fetchEventsPage(tenantRef.current.id, pageIndex + 1);
+  }, [pageIndex, pageLoading, fetchEventsPage]);
+
+  // Poll seal status while checkpointer is behind (scale seed / burst load).
+  useEffect(() => {
+    if (demo || !tenant?.id) return;
+    if (!sealStatus || sealStatus.pendingSeal <= 0) return;
+    const id = setInterval(() => fetchTenantStats(tenant.id), 15000);
+    return () => clearInterval(id);
+  }, [demo, tenant?.id, sealStatus?.pendingSeal, fetchTenantStats]);
 
   useEffect(() => {
     loadEvents(tenant.id);
@@ -165,6 +354,37 @@ export default function DashboardPage() {
       );
     },
     [showToast],
+  );
+
+  const scrollToBreach = useCallback((seq) => {
+    if (seq == null) return;
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        document
+          .querySelector(`[data-seq="${seq}"]`)
+          ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 150);
+    });
+  }, []);
+
+  const ensureBreachVisible = useCallback(
+    async (tenantId, seq) => {
+      if (seq == null) return;
+      const size = pageSizeRef.current;
+      const targetPage = Math.floor(seq / size);
+      if (demoActive.current) {
+        publishDemo(tenantId, targetPage);
+        scrollToBreach(seq);
+        return;
+      }
+      if (eventsRef.current.some((e) => e.seq === seq)) {
+        scrollToBreach(seq);
+        return;
+      }
+      await fetchEventsPage(tenantId, targetPage, size);
+      scrollToBreach(seq);
+    },
+    [scrollToBreach, publishDemo, fetchEventsPage],
   );
 
   const refreshRecompute = useCallback(async (seq) => {
@@ -198,37 +418,83 @@ export default function DashboardPage() {
 
   const handleCursorSeq = useCallback(
     (seq) => {
+      const total = totalEventCount ?? eventsRef.current.length;
+      if (total > eventsRef.current.length) return;
       setSelectedSeq(seq);
       refreshRecompute(seq);
     },
-    [refreshRecompute],
+    [refreshRecompute, totalEventCount],
   );
 
   const handleVerify = useCallback(async () => {
     if (status === "verifying") return;
+    verifyAbortRef.current?.abort();
+    const ac = new AbortController();
+    verifyAbortRef.current = ac;
     setStatus("verifying");
     setBrokenSeq(null);
     setWorm(null);
+    setEventProof(null);
+    setVerifyProgress({
+      phase: "loading",
+      verified: 0,
+      total: totalEventCount ?? events.length,
+      label: "Starting verification",
+    });
     try {
       const tid = tenant.id;
-      const verifyReq = demoActive.current
-        ? verifyDemo(demoStore.current[tid] || [], demoCheckpoints.current[tid])
-        : Promise.all([
-            fetch("/api/verify", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ tenantId: tid }),
-            }).then((r) => r.json()),
-            fetch(`/api/checkpoint?tenantId=${tid}`)
-              .then((r) => r.json())
-              .catch(() => ({ checkpoint: null })),
-          ]).then(([v, c]) => {
-            if (c?.checkpoint) setCheckpoint(c.checkpoint);
-            return v;
-          });
+      const signal = ac.signal;
+      const onProgress = (p) => {
+        if (!ac.signal.aborted) setVerifyProgress(p);
+      };
 
-      const walkMs = reduced ? 150 : Math.max(900, events.length * 45 + 250);
-      const [res] = await Promise.all([verifyReq, delay(walkMs)]);
+      let res;
+      if (demoActive.current) {
+        const chain = demoStore.current[tid] || [];
+        const total = chain.length;
+        const cp = demoCheckpoints.current[tid];
+        const sealAt = cp?.count ?? 0;
+        const stepMs = reduced ? 8 : 35;
+
+        onProgress({
+          phase: "loading",
+          verified: 0,
+          total,
+          label: "Loading demo chain",
+        });
+        for (let i = 1; i <= total; i += 1) {
+          if (ac.signal.aborted) return;
+          onProgress({
+            phase: i <= sealAt ? "seal-trusted" : "tail-walk",
+            verified: i,
+            total,
+            label:
+              i <= sealAt
+                ? `WORM seal trusted through event ${sealAt.toLocaleString()}`
+                : `Walking tail (${(i - sealAt).toLocaleString()} / ${(total - sealAt).toLocaleString()})`,
+          });
+          await delay(stepMs);
+        }
+        res = await verifyDemo(chain, cp);
+      } else {
+        const checkpointReq = fetch(`/api/checkpoint?tenantId=${tid}`, { signal })
+          .then((r) => r.json())
+          .catch(() => ({ checkpoint: null }));
+
+        const [verifyRes, cpPayload] = await Promise.all([
+          verifyWithStream(tid, signal, onProgress),
+          checkpointReq,
+        ]);
+        res = verifyRes;
+        if (cpPayload?.checkpoint) setCheckpoint(cpPayload.checkpoint);
+      }
+      if (ac.signal.aborted) return;
+      setVerifyProgress({
+        phase: "done",
+        verified: res.count ?? totalEventCount ?? events.length,
+        total: res.count ?? totalEventCount ?? events.length,
+        label: "Verification complete",
+      });
       setVerifyResult(res);
       setLastVerifyTs(
         new Date().toLocaleTimeString("en-US", { hour12: false }),
@@ -248,27 +514,43 @@ export default function DashboardPage() {
 
       if (res?.intact) {
         setStatus("verified");
-        showToast(`Chain intact - ${res.count} events verified`);
+        const modeLabel =
+          res.mode === "since-seal" && res.sealAt > 0
+            ? `seal@${res.sealAt}, tail ${res.tailVerified}`
+            : "full walk";
+        showToast(
+          `Chain intact (${modeLabel}) - ${res.durationMs ?? "?"}ms`,
+        );
       } else {
-        const seq = res?.breaks?.[0]?.seq ?? null;
+        const seq =
+          res?.breaks?.find((b) => typeof b.seq === "number" && b.seq >= 0)?.seq ??
+          null;
         setBrokenSeq(seq);
         setStatus("tamper");
         setSelectedSeq(seq);
+        setView("ledger");
         refreshRecompute(seq);
+        await ensureBreachVisible(tid, seq);
         showToast(`Integrity breach detected at #${seq}`);
       }
-    } catch {
+    } catch (e) {
+      if (e?.name === "AbortError") return;
       setStatus("idle");
-      showToast("Verification request failed");
+      setVerifyProgress(null);
+      showToast("Verification failed — is the dev server running?");
+    } finally {
+      if (verifyAbortRef.current === ac) verifyAbortRef.current = null;
     }
   }, [
     status,
     tenant,
     events.length,
+    totalEventCount,
     reduced,
     checkpoint,
     showToast,
     refreshRecompute,
+    ensureBreachVisible,
   ]);
 
   const handleAppend = useCallback(
@@ -285,7 +567,11 @@ export default function DashboardPage() {
         setBrokenSeq(null);
         setWorm(null);
         setNewSeq(seq);
-        publishDemo(tid);
+        const lastPage = Math.max(
+          0,
+          Math.ceil(next.length / pageSizeRef.current) - 1,
+        );
+        publishDemo(tid, lastPage);
         showToast(`Event #${seq} logged`);
         setTimeout(() => setNewSeq(null), 1400);
         return;
@@ -310,11 +596,16 @@ export default function DashboardPage() {
       setBrokenSeq(null);
       setWorm(null);
       setNewSeq(data.seq);
-      await loadEvents(tid);
+      const total = (await fetchTenantStats(tid)) ?? data.seq + 1;
+      const lastPage = Math.max(
+        0,
+        Math.ceil(total / pageSizeRef.current) - 1,
+      );
+      await fetchEventsPage(tid, lastPage);
       showToast(`Event #${data.seq} logged`);
       setTimeout(() => setNewSeq(null), 1400);
     },
-    [tenant, loadEvents, showToast, publishDemo],
+    [tenant, fetchEventsPage, showToast, publishDemo, fetchTenantStats],
   );
 
   const handleTamper = useCallback(() => {
@@ -328,6 +619,35 @@ export default function DashboardPage() {
     publishDemo(tid);
     showToast(`Record #${seq} silently altered - run verification`);
   }, [tenant, publishDemo, showToast]);
+
+  useEffect(() => {
+    if (!selectedSeq || demoActive.current || status === "verifying") {
+      setEventProof(null);
+      return;
+    }
+    const total = totalEventCount ?? events.length;
+    if (total > 5000) {
+      setEventProof(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(
+      `/api/proof?tenantId=${encodeURIComponent(tenant.id)}&seq=${selectedSeq}`,
+    )
+      .then((r) => r.json())
+      .then((d) => {
+        if (!cancelled) setEventProof(d.error ? null : d);
+      })
+      .catch(() => {
+        if (!cancelled) setEventProof(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSeq, tenant.id, status, totalEventCount, events.length]);
+
+  const skipRowWalk =
+    !demo && (totalEventCount ?? 0) > events.length;
 
   const handleExport = useCallback(() => {
     downloadComplianceReport({ tenant, events, status, lastVerifyTs });
@@ -349,9 +669,20 @@ export default function DashboardPage() {
     });
   }, [events, query, actionFilter, flaggedOnly]);
 
+  const displayCount = totalEventCount ?? events.length;
   const selectedEvent = events.find((e) => e.seq === selectedSeq) || null;
   const checkpointCount = checkpoint?.count ?? null;
   const metrics = useMemo(() => computeMetrics(events), [events]);
+  const pageSeqRange = useMemo(() => {
+    if (!events.length) return { min: null, max: null };
+    const seqs = events.map((e) => e.seq);
+    return { min: Math.min(...seqs), max: Math.max(...seqs) };
+  }, [events]);
+  const breachSummary = useMemo(
+    () =>
+      status === "tamper" ? tamperSummary(brokenSeq, displayCount) : null,
+    [status, brokenSeq, displayCount],
+  );
 
   return (
     <div className="flex h-screen overflow-hidden bg-canvas">
@@ -366,17 +697,29 @@ export default function DashboardPage() {
 
       <div className="flex flex-1 overflow-hidden">
         <main className="flex flex-1 flex-col overflow-hidden">
+          {!demo && sealStatus && sealStatus.totalEvents > 0 && status !== "verifying" && (
+            <SealStatusBar sealStatus={sealStatus} compact />
+          )}
+          {status === "verifying" && verifyProgress && (
+            <VerifyProgressBar
+              progress={verifyProgress}
+              onCancelVerify={handleCancelVerify}
+            />
+          )}
           <div className="flex-1 overflow-y-auto">
             {view === "overview" && (
               <OverviewView
                 tenantLabel={tenant.label}
                 metrics={metrics}
+                totalEventCount={displayCount}
                 events={events}
                 checkpointCount={checkpointCount}
                 status={status}
                 brokenSeq={brokenSeq}
                 verifying={status === "verifying"}
+                verifyProgress={verifyProgress}
                 onVerify={handleVerify}
+                onCancelVerify={handleCancelVerify}
                 onOpenLedger={() => setView("ledger")}
               />
             )}
@@ -385,15 +728,25 @@ export default function DashboardPage() {
               <>
                 <ConfidenceHeader
                   tenantLabel={tenant.label}
-                  count={events.length}
+                  count={displayCount}
+                  loadedCount={events.length}
                   checkpointCount={checkpointCount}
                   status={status}
                   brokenSeq={brokenSeq}
                   lastVerifyTs={lastVerifyTs}
                   verifying={status === "verifying"}
                   metrics={metrics}
+                  verifyResult={verifyResult}
+                  verifyProgress={verifyProgress}
                   onVerify={handleVerify}
+                  onCancelVerify={handleCancelVerify}
+                  pageIndex={pageIndex}
+                  pageSize={pageSize}
                 />
+
+                {status === "tamper" && breachSummary && (
+                  <TamperLegend summary={breachSummary} />
+                )}
 
                 <LedgerToolbar
                   query={query}
@@ -402,8 +755,6 @@ export default function DashboardPage() {
                   onActionFilter={setActionFilter}
                   flaggedOnly={flaggedOnly}
                   onFlaggedOnly={setFlaggedOnly}
-                  resultCount={filtered.length}
-                  totalCount={events.length}
                   onAppend={() => setAppendOpen(true)}
                   onExport={handleExport}
                 />
@@ -415,22 +766,58 @@ export default function DashboardPage() {
                   status={status}
                   brokenSeq={brokenSeq}
                   reduced={reduced}
+                  skipRowWalk={skipRowWalk}
+                  totalEventCount={displayCount}
+                  verifyProgress={verifyProgress}
                   onSelect={handleSelect}
                   onCursorSeq={handleCursorSeq}
+                  onCancelVerify={handleCancelVerify}
+                />
+
+                <TablePagination
+                  pageIndex={pageIndex}
+                  pageSize={pageSize}
+                  pageSizes={PAGE_SIZE_OPTIONS}
+                  totalCount={displayCount}
+                  rowCount={events.length}
+                  filteredCount={filtered.length}
+                  seqMin={pageSeqRange.min}
+                  seqMax={pageSeqRange.max}
+                  loading={pageLoading}
+                  onPageSizeChange={handlePageSizeChange}
+                  onPrev={handlePagePrev}
+                  onNext={handlePageNext}
                 />
               </>
+            )}
+
+            {view === "alerts" && (
+              <AlertsView
+                tenantLabel={tenant.label}
+                tenantId={tenant.id}
+                demo={demo}
+                events={events}
+                onSelectEvent={(seq) => {
+                  setView("ledger");
+                  handleSelect(seq);
+                }}
+                onOpenLedger={() => setView("ledger")}
+              />
             )}
 
             {view === "checkpoints" && (
               <CheckpointsView
                 tenantLabel={tenant.label}
                 checkpoint={checkpoint}
-                totalEvents={events.length}
+                totalEvents={displayCount}
+                sealStatus={sealStatus}
                 worm={worm}
                 status={status}
                 brokenSeq={brokenSeq}
                 verifying={status === "verifying"}
+                verifyProgress={verifyProgress}
                 onVerify={handleVerify}
+                onCancelVerify={handleCancelVerify}
                 onCopy={handleCopy}
               />
             )}
@@ -459,6 +846,7 @@ export default function DashboardPage() {
           event={selectedEvent}
           recompute={recompute}
           worm={worm}
+          proof={eventProof}
           onCopy={handleCopy}
           onClose={() => setSelectedSeq(null)}
         />

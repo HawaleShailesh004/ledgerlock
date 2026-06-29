@@ -1,0 +1,112 @@
+<svg width="1280" height="640" viewBox="0 0 1280 640" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="Geist, Arial, sans-serif">
+  <rect width="1280" height="640" fill="#F4F6F8"/>
+
+  <text x="56" y="52" font-size="27" font-weight="700" fill="#16181D">LedgerLock — Architecture</text>
+  <text x="56" y="80" font-size="14.5" fill="#586273" font-family="'IBM Plex Mono', monospace">Tamper-evident audit trail · Amazon DynamoDB · Streams · Lambda · S3 Object Lock · ap-south-1</text>
+
+  <!-- Third-party SaaS app -->
+  <g transform="translate(56,150)">
+    <rect width="190" height="96" rx="10" fill="#FFFFFF" stroke="#E4E8ED"/>
+    <text x="95" y="32" text-anchor="middle" font-size="14" font-weight="600" fill="#16181D">Regulated SaaS</text>
+    <text x="95" y="52" text-anchor="middle" font-size="14" font-weight="600" fill="#16181D">app (EHR / fintech)</text>
+    <text x="95" y="76" text-anchor="middle" font-size="12.5" fill="#0F7D6B" font-family="'IBM Plex Mono', monospace">ledger.append(e)</text>
+  </g>
+
+  <!-- LedgerLock API on Vercel -->
+  <g transform="translate(300,118)">
+    <rect width="320" height="290" rx="12" fill="#FFFFFF" stroke="#E4E8ED"/>
+    <text x="20" y="32" font-size="12.5" font-weight="700" fill="#5A6069" letter-spacing="1.5" font-family="'IBM Plex Mono', monospace">VERCEL · NEXT.JS</text>
+    <text x="20" y="56" font-size="15" font-weight="600" fill="#16181D">LedgerLock API</text>
+
+    <g transform="translate(20,74)" font-family="'IBM Plex Mono', monospace">
+      <rect width="280" height="40" rx="7" fill="#F9FAFB" stroke="#E4E8ED"/>
+      <text x="14" y="18" font-size="12.5" font-weight="600" fill="#16181D">POST /api/events</text>
+      <text x="14" y="33" font-size="11" fill="#586273">append · conditional PutItem</text>
+    </g>
+    <g transform="translate(20,124)" font-family="'IBM Plex Mono', monospace">
+      <rect width="280" height="40" rx="7" fill="#F9FAFB" stroke="#E4E8ED"/>
+      <text x="14" y="18" font-size="12.5" font-weight="600" fill="#16181D">POST /api/verify</text>
+      <text x="14" y="33" font-size="11" fill="#586273">bounded · since last WORM seal</text>
+    </g>
+    <g transform="translate(20,174)" font-family="'IBM Plex Mono', monospace">
+      <rect width="280" height="40" rx="7" fill="#F9FAFB" stroke="#E4E8ED"/>
+      <text x="14" y="18" font-size="12.5" font-weight="600" fill="#16181D">GET /api/proof</text>
+      <text x="14" y="33" font-size="11" fill="#586273">O(log n) Merkle inclusion proof</text>
+    </g>
+    <g transform="translate(20,224)" font-family="'IBM Plex Mono', monospace">
+      <rect width="280" height="40" rx="7" fill="#F9FAFB" stroke="#E4E8ED"/>
+      <text x="14" y="18" font-size="12.5" font-weight="600" fill="#16181D">GET /api/alerts</text>
+      <text x="14" y="33" font-size="11" fill="#586273">sparse GSI1 · review queue</text>
+    </g>
+  </g>
+
+  <!-- DynamoDB -->
+  <g transform="translate(680,118)">
+    <rect width="290" height="150" rx="12" fill="#FFFFFF" stroke="#0F7D6B" stroke-width="2"/>
+    <text x="20" y="32" font-size="12.5" font-weight="700" fill="#0F7D6B" letter-spacing="1.5" font-family="'IBM Plex Mono', monospace">AMAZON DYNAMODB</text>
+    <text x="20" y="58" font-size="14" font-weight="600" fill="#16181D">Single-table · append-only</text>
+    <text x="20" y="82" font-size="12.5" fill="#586273" font-family="'IBM Plex Mono', monospace">PK = TENANT#&lt;id&gt;</text>
+    <text x="20" y="102" font-size="12.5" fill="#586273" font-family="'IBM Plex Mono', monospace">SK = EVENT#&lt;padded-seq&gt;</text>
+    <text x="20" y="126" font-size="12.5" fill="#586273" font-family="'IBM Plex Mono', monospace">SHA-256 hash chain · GSI1</text>
+  </g>
+
+  <!-- Streams -->
+  <g transform="translate(680,318)">
+    <rect width="290" height="56" rx="10" fill="#FFFFFF" stroke="#E4E8ED"/>
+    <text x="20" y="25" font-size="13.5" font-weight="600" fill="#16181D">DynamoDB Streams</text>
+    <text x="20" y="43" font-size="11.5" fill="#586273" font-family="'IBM Plex Mono', monospace">NEW_IMAGE feed</text>
+  </g>
+
+  <!-- Lambda -->
+  <g transform="translate(680,408)">
+    <rect width="290" height="56" rx="10" fill="#FFFFFF" stroke="#E4E8ED"/>
+    <text x="20" y="25" font-size="13.5" font-weight="600" fill="#16181D">Lambda — checkpointer</text>
+    <text x="20" y="43" font-size="11.5" fill="#586273" font-family="'IBM Plex Mono', monospace">Merkle root / 10 · self-healing</text>
+  </g>
+
+  <!-- S3 Object Lock -->
+  <g transform="translate(680,498)">
+    <rect width="290" height="56" rx="10" fill="#FFFFFF" stroke="#3FB6C4" stroke-width="2"/>
+    <text x="20" y="25" font-size="13.5" font-weight="600" fill="#16181D">S3 Object Lock (COMPLIANCE)</text>
+    <text x="20" y="43" font-size="11.5" fill="#0C6657" font-family="'IBM Plex Mono', monospace">write-once Merkle seal</text>
+  </g>
+
+  <!-- IAM badge -->
+  <g transform="translate(1030,150)">
+    <rect width="194" height="120" rx="10" fill="#FFFFFF" stroke="#E4E8ED"/>
+    <text x="16" y="28" font-size="12" font-weight="700" fill="#5A6069" letter-spacing="1" font-family="'IBM Plex Mono', monospace">APP IAM ROLE</text>
+    <text x="16" y="54" font-size="13" fill="#0F7D6B" font-family="'IBM Plex Mono', monospace">✓ PutItem</text>
+    <text x="16" y="76" font-size="13" fill="#0F7D6B" font-family="'IBM Plex Mono', monospace">✓ Query</text>
+    <text x="16" y="100" font-size="13" fill="#C1281F" font-family="'IBM Plex Mono', monospace">✗ Update  ✗ Delete</text>
+  </g>
+
+  <!-- Offline verifier -->
+  <g transform="translate(1030,498)">
+    <rect width="194" height="56" rx="10" fill="#FFFFFF" stroke="#E4E8ED" stroke-dasharray="4 3"/>
+    <text x="16" y="24" font-size="12.5" font-weight="600" fill="#16181D">Offline verifier</text>
+    <text x="16" y="42" font-size="11" fill="#586273" font-family="'IBM Plex Mono', monospace">no AWS creds needed</text>
+  </g>
+
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#8B95A4"/>
+    </marker>
+  </defs>
+  <g stroke="#8B95A4" stroke-width="2" fill="none" marker-end="url(#arrow)">
+    <line x1="248" y1="198" x2="296" y2="198"/>            <!-- app -> api -->
+    <line x1="622" y1="193" x2="676" y2="193"/>            <!-- api -> dynamo -->
+    <line x1="825" y1="270" x2="825" y2="314"/>            <!-- dynamo -> streams -->
+    <line x1="825" y1="376" x2="825" y2="404"/>            <!-- streams -> lambda -->
+    <line x1="825" y1="466" x2="825" y2="494"/>            <!-- lambda -> s3 -->
+  </g>
+  <!-- since-seal read-back (dashed) — routed clear to the right of the API box -->
+  <path d="M676 520 C 650 470, 648 360, 624 300" stroke="#3FB6C4" stroke-width="1.6" fill="none" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+  <text x="636" y="356" font-size="10.5" fill="#0C6657" font-family="'IBM Plex Mono', monospace">verify since seal</text>
+  <!-- s3 -> offline verifier -->
+  <line x1="970" y1="526" x2="1026" y2="526" stroke="#8B95A4" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+
+  <!-- key annotations (moved up, clear of boxes) -->
+  <text x="56" y="556" font-size="13" fill="#586273">Immutability is enforced by the <tspan font-weight="700" fill="#16181D">absence</tspan> of Update/Delete — in code and in IAM.</text>
+  <text x="56" y="578" font-size="13" fill="#586273">A tamper changes the live Merkle root; the sealed WORM root <tspan font-weight="700" fill="#16181D">cannot</tspan> change — so forgery is caught,</text>
+  <text x="56" y="600" font-size="13" fill="#586273">and any record carries an <tspan font-weight="700" fill="#16181D">O(log n) inclusion proof</tspan> a regulator verifies offline.</text>
+</svg>

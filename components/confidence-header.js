@@ -10,6 +10,12 @@ import {
 } from "./icons";
 import ConfidenceGauge from "./confidence-gauge";
 import Sparkline from "./sparkline";
+import {
+  tamperSummary,
+  tamperGaugeDisplay,
+  tamperBannerBody,
+  verifyGaugeLabel,
+} from "@/lib/tamper-stats";
 
 function StatCard({ label, value, sub, series, color, icon }) {
   return (
@@ -20,15 +26,19 @@ function StatCard({ label, value, sub, series, color, icon }) {
         </span>
         {icon}
       </div>
-      <div className="mt-2 flex items-end justify-between gap-2">
-        <div>
-          <div className="text-[22px] font-semibold leading-none tracking-tight text-primary">
-            {value}
-          </div>
-          {sub && <div className="mt-1 text-[12px] text-secondary">{sub}</div>}
-        </div>
-        {series && series.length > 1 && (
+      {series && series.length > 1 && (
+        <div className="mt-2 flex justify-start">
           <Sparkline data={series} color={color} width={84} height={30} />
+        </div>
+      )}
+      <div className={series && series.length > 1 ? "mt-1" : "mt-2"}>
+        <div className="text-[22px] font-semibold leading-none tracking-tight text-primary">
+          {value}
+        </div>
+        {sub && (
+          <div className="mt-1 text-[12px] leading-tight text-secondary whitespace-nowrap">
+            {sub}
+          </div>
         )}
       </div>
     </div>
@@ -38,38 +48,48 @@ function StatCard({ label, value, sub, series, color, icon }) {
 export default function ConfidenceHeader({
   tenantLabel,
   count,
+  loadedCount,
   checkpointCount,
   status,
   brokenSeq,
   lastVerifyTs,
   verifying,
   metrics,
+  verifyResult,
+  verifyProgress,
   onVerify,
+  onCancelVerify,
+  pageIndex,
+  pageSize,
 }) {
   const tampered = status === "tamper";
   const verified = status === "verified";
+  const breach = tampered ? tamperSummary(brokenSeq, count) : null;
 
   let gauge;
   if (verifying) {
+    const live = verifyProgress;
+    const liveTotal = live?.total ?? count;
+    const liveVerified = live?.verified ?? 0;
+    const pct = liveTotal
+      ? Math.min(100, Math.round((liveVerified / liveTotal) * 100))
+      : 30;
     gauge = {
       tone: "accent",
-      value: "…",
-      label: "Scanning",
-      pct: 30,
-      spinning: true,
+      value: live ? `${pct}%` : "…",
+      label: verifyGaugeLabel(live?.phase),
+      pct,
+      spinning: live?.phase !== "done",
+      compact: true,
     };
   } else if (verified) {
-    gauge = { tone: "verified", value: "100%", label: "Integrity", pct: 100 };
+    gauge = { tone: "verified", value: "100%", label: "Integrity", pct: 100, compact: false };
+  } else if (tampered && breach) {
+    gauge = { tone: "tamper", ...tamperGaugeDisplay(breach), compact: false };
   } else if (tampered) {
-    const intact = count ? Math.round(((brokenSeq ?? 0) / count) * 100) : 0;
-    gauge = {
-      tone: "tamper",
-      value: `${intact}%`,
-      label: "Integrity",
-      pct: intact,
-    };
+    gauge = { tone: "tamper", value: "!", label: "breach", pct: 0, compact: false };
   } else {
-    gauge = { tone: "accent", value: "Ready", label: "to verify", pct: 100 };
+    gauge = { tone: "accent", value: "Ready", label: "to verify", pct: 0, compact: false };
   }
 
   const banner = tampered
@@ -80,7 +100,7 @@ export default function ConfidenceHeader({
         title: `Integrity breach at event ${
           brokenSeq != null ? `#${String(brokenSeq).padStart(4, "0")}` : ""
         }`,
-        body: "A record was altered after it was written. The chain no longer matches its sealed WORM checkpoint.",
+        body: tamperBannerBody(breach),
         titleColor: "text-tamper",
       }
     : verified
@@ -91,17 +111,32 @@ export default function ConfidenceHeader({
           ),
           iconBg: "bg-verified-weak",
           title: "Chain verified - all records intact",
-          body: `${count} events recomputed and matched against the sealed WORM checkpoint.`,
+          body: verifyResult?.mode === "since-seal" && verifyResult?.sealAt > 0
+            ? `WORM seal trusted through event ${verifyResult.sealAt}; ${verifyResult.tailVerified} tail events walked in ${verifyResult.durationMs ?? "?"}ms.`
+            : `${count} events recomputed in ${verifyResult?.durationMs ?? "?"}ms.`,
           titleColor: "text-verified",
         }
-      : {
-          wash: "hero-wash",
-          icon: <ShieldCheck className="text-accent" width={20} height={20} />,
-          iconBg: "bg-accent-weak",
-          title: "Ready to verify integrity",
-          body: "Run a full integrity check to confirm no records have been altered since they were written.",
-          titleColor: "text-accent",
-        };
+      : verifying
+        ? {
+            wash: "hero-wash",
+            icon: (
+              <span className="h-5 w-5 animate-spin rounded-full border-2 border-accent/30 border-t-accent" />
+            ),
+            iconBg: "bg-accent-weak",
+            title: "Verifying chain integrity",
+            body: verifyProgress
+              ? `${verifyProgress.verified.toLocaleString()} / ${verifyProgress.total.toLocaleString()} events checked — ${verifyProgress.label || "in progress"}`
+              : "Recomputing hash chain against the WORM seal…",
+            titleColor: "text-accent",
+          }
+        : {
+            wash: "hero-wash",
+            icon: <ShieldCheck className="text-accent" width={20} height={20} />,
+            iconBg: "bg-accent-weak",
+            title: "Ready to verify integrity",
+            body: "Since-seal verify trusts the WORM checkpoint prefix and walks only the tail.",
+            titleColor: "text-accent",
+          };
 
   return (
     <header className={`border-b border-line ${banner.wash} px-8 pb-7 pt-7`}>
@@ -116,24 +151,24 @@ export default function ConfidenceHeader({
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={onVerify}
-          disabled={verifying}
-          className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-[13.5px] font-semibold text-on-accent shadow-raised transition-all hover:bg-accent-hover active:scale-[0.98] disabled:cursor-progress disabled:opacity-70"
-        >
-          {verifying ? (
-            <>
-              <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-on-accent/40 border-t-on-accent" />
-              Verifying…
-            </>
-          ) : (
-            <>
-              <CheckTick width={16} height={16} />
-              Verify chain integrity
-            </>
-          )}
-        </button>
+        {verifying ? (
+          <button
+            type="button"
+            onClick={onCancelVerify}
+            className="flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-[13.5px] font-semibold text-primary shadow-raised transition-all hover:bg-surface-2 active:scale-[0.98]"
+          >
+            Cancel verify
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onVerify}
+            className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-[13.5px] font-semibold text-on-accent shadow-raised transition-all hover:bg-accent-hover active:scale-[0.98]"
+          >
+            <CheckTick width={16} height={16} />
+            Verify chain integrity
+          </button>
+        )}
       </div>
 
       <div className="mt-6 flex flex-col gap-5 lg:flex-row lg:items-stretch">
@@ -149,6 +184,7 @@ export default function ConfidenceHeader({
               value={gauge.value}
               label={gauge.label}
               spinning={gauge.spinning}
+              compact={gauge.compact}
               size={120}
             />
           </div>
@@ -173,8 +209,12 @@ export default function ConfidenceHeader({
         <div className="grid flex-1 grid-cols-2 gap-4 xl:grid-cols-4">
           <StatCard
             label="Total events"
-            value={count}
-            sub="logged this period"
+            value={count?.toLocaleString?.() ?? count}
+            sub={
+              loadedCount != null && count
+                ? `${loadedCount.toLocaleString()} on page ${(pageIndex ?? 0) + 1} · ${pageSize ?? loadedCount}/page`
+                : "logged this period"
+            }
             series={metrics?.volumeSeries}
             color="var(--color-accent)"
           />
@@ -201,11 +241,13 @@ export default function ConfidenceHeader({
               </span>
             }
             sub={
-              tampered
-                ? "Breach detected"
-                : verified
-                  ? "All intact"
-                  : "Awaiting check"
+              verifying
+                ? "In progress…"
+                : tampered
+                  ? "Breach detected"
+                  : verified
+                    ? "All intact"
+                    : "Awaiting check"
             }
           />
         </div>

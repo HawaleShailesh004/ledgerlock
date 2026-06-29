@@ -1,7 +1,8 @@
 "use client";
 
-import { CHECKPOINT_INTERVAL } from "@/lib/demo-ledger";
+import { CHECKPOINT_EVERY } from "@/lib/constants";
 import { seqLabel, shortDateTime } from "./format";
+import SealStatusBar from "./seal-status-bar";
 import {
   SealGlyph,
   LockGlyph,
@@ -51,19 +52,26 @@ export default function CheckpointsView({
   tenantLabel,
   checkpoint,
   totalEvents,
+  sealStatus,
   worm,
   status,
   brokenSeq,
   verifying,
   onVerify,
+  onCancelVerify,
   onCopy,
 }) {
-  const interval = CHECKPOINT_INTERVAL;
-  const sealedCount = checkpoint?.count ?? 0;
+  const interval = CHECKPOINT_EVERY;
+  const sealedCount = sealStatus?.sealedThrough ?? checkpoint?.count ?? 0;
+  const liveTotal = sealStatus?.totalEvents ?? totalEvents;
+  const pendingSeal = sealStatus?.pendingSeal ?? Math.max(liveTotal - sealedCount, 0);
   const hasSeal = sealedCount > 0;
   const nextBoundary = sealedCount + interval;
-  const sinceSeal = Math.max(totalEvents - sealedCount, 0);
-  const progress = Math.min((sinceSeal / interval) * 100, 100);
+  const sinceSeal = pendingSeal > 0 ? pendingSeal : Math.max(liveTotal - sealedCount, 0);
+  const progress =
+    pendingSeal > 0 && interval > 0
+      ? Math.min((pendingSeal / interval) * 100, 100)
+      : Math.min((sinceSeal / interval) * 100, 100);
 
   const tampered = status === "tamper";
   const verified = status === "verified";
@@ -85,16 +93,27 @@ export default function CheckpointsView({
             <span className="font-medium text-primary">{tenantLabel}</span>
           </p>
         </div>
-        <button
-          type="button"
-          onClick={onVerify}
-          disabled={verifying}
-          className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-[13.5px] font-semibold text-on-accent shadow-raised transition-all hover:bg-accent-hover active:scale-[0.98] disabled:cursor-progress disabled:opacity-70"
-        >
-          <CheckTick width={16} height={16} />
-          {verifying ? "Verifying…" : "Verify against seal"}
-        </button>
+        {verifying ? (
+          <button
+            type="button"
+            onClick={onCancelVerify}
+            className="flex items-center gap-2 rounded-lg border border-line bg-surface px-4 py-2.5 text-[13.5px] font-semibold text-primary shadow-raised transition-all hover:bg-surface-2"
+          >
+            Cancel verify
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onVerify}
+            className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-[13.5px] font-semibold text-on-accent shadow-raised transition-all hover:bg-accent-hover active:scale-[0.98]"
+          >
+            <CheckTick width={16} height={16} />
+            Verify against seal
+          </button>
+        )}
       </div>
+
+      {sealStatus && <SealStatusBar sealStatus={sealStatus} />}
 
       {/* Explainer + cross-check */}
       <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -185,16 +204,25 @@ export default function CheckpointsView({
               </span>
               <div>
                 <div className="text-[14px] font-semibold text-primary">
-                  Next seal at {seqLabel(nextBoundary)}
+                  {pendingSeal > 0
+                    ? `${pendingSeal.toLocaleString()} events pending seal`
+                    : `Next seal at ${seqLabel(nextBoundary)}`}
                 </div>
                 <div className="text-[12.5px] text-secondary">
-                  {sinceSeal} of {interval} events accumulated since the last
-                  seal
+                  {pendingSeal > 0
+                    ? `Checkpointer sealing forward — ${sinceSeal.toLocaleString()} of ${interval} toward next boundary`
+                    : `${sinceSeal} of ${interval} events accumulated since the last seal`}
                 </div>
               </div>
             </div>
-            <span className="rounded-full bg-surface-2 px-2.5 py-1 text-[11px] font-medium text-muted">
-              Pending
+            <span
+              className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${
+                pendingSeal > 0
+                  ? "bg-flagged-weak text-flagged"
+                  : "bg-surface-2 text-muted"
+              }`}
+            >
+              {pendingSeal > 0 ? "Catching up" : "Pending"}
             </span>
           </div>
           <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-surface-2">

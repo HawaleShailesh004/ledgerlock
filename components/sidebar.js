@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import Logo from "./logo";
-import { LedgerGlyph, ChartGlyph, SealGlyph, ChevronDown } from "./icons";
+import { LedgerGlyph, ChartGlyph, SealGlyph, FlagGlyph, ChevronDown } from "./icons";
 
 const NAV = [
   { id: "overview", label: "Overview", Icon: ChartGlyph },
   { id: "ledger", label: "Audit Ledger", Icon: LedgerGlyph },
+  { id: "alerts", label: "Review queue", Icon: FlagGlyph },
   { id: "checkpoints", label: "Checkpoints", Icon: SealGlyph },
 ];
 

@@ -10,15 +10,12 @@ export default function LedgerToolbar({
   onActionFilter,
   flaggedOnly,
   onFlaggedOnly,
-  resultCount,
-  totalCount,
   onAppend,
   onExport,
 }) {
   return (
     <div className="sticky top-0 z-20 border-b border-line bg-surface/95 px-8 py-3.5 backdrop-blur">
       <div className="flex flex-wrap items-center gap-3">
-        {/* Search */}
         <div className="relative min-w-[220px] flex-1">
           <SearchGlyph className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
           <input
@@ -31,7 +28,6 @@ export default function LedgerToolbar({
           />
         </div>
 
-        {/* Action filter */}
         <div className="relative">
           <select
             value={actionFilter}
@@ -49,7 +45,6 @@ export default function LedgerToolbar({
           <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted" />
         </div>
 
-        {/* Flagged toggle */}
         <button
           type="button"
           onClick={() => onFlaggedOnly(!flaggedOnly)}
@@ -81,11 +76,6 @@ export default function LedgerToolbar({
             Log event
           </button>
         </div>
-      </div>
-
-      <div className="mt-2.5 text-[12px] text-muted">
-        Showing <span className="font-medium text-secondary">{resultCount}</span>{" "}
-        of {totalCount} events
       </div>
     </div>
   );

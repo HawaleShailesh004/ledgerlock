@@ -10,6 +10,7 @@ export default function ConfidenceGauge({
   label,
   value,
   spinning = false,
+  compact = false,
 }) {
   const [shown, setShown] = useState(0);
 
@@ -63,15 +64,17 @@ export default function ConfidenceGauge({
           style={{ transition: "stroke-dashoffset 0.9s cubic-bezier(0.22,1,0.36,1)" }}
         />
       </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
+      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-2 text-center">
         <span
-          className="text-[26px] font-semibold tracking-tight"
+          className={`font-semibold tracking-tight leading-none ${
+            compact ? "text-[22px]" : "text-[26px]"
+          }`}
           style={{ color }}
         >
           {value}
         </span>
-        {label && (
-          <span className="mt-0.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+        {label && !compact && (
+          <span className="mt-1 max-w-22 text-[10px] font-medium uppercase leading-tight tracking-wide text-muted line-clamp-2">
             {label}
           </span>
         )}

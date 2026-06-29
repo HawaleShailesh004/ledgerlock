@@ -26,6 +26,10 @@ export default function LedgerList({
   status,
   brokenSeq,
   reduced,
+  skipRowWalk = false,
+  totalEventCount,
+  verifyProgress,
+  onCancelVerify,
   onSelect,
   onCursorSeq,
 }) {
@@ -33,9 +37,9 @@ export default function LedgerList({
   const [verifiedSet, setVerifiedSet] = useState(() => new Set());
   const walkTimer = useRef(null);
 
-  // Drive the scan cursor oldest -> newest while verifying.
+  // Drive the scan cursor oldest -> newest while verifying (skip on large scale tenants).
   useEffect(() => {
-    if (status !== "verifying") {
+    if (status !== "verifying" || skipRowWalk) {
       setCursorSeq(null);
       setVerifiedSet(new Set());
       if (walkTimer.current) clearInterval(walkTimer.current);
@@ -64,7 +68,37 @@ export default function LedgerList({
     return () => {
       if (walkTimer.current) clearInterval(walkTimer.current);
     };
-  }, [status, events, reduced, onCursorSeq]);
+  }, [status, events, reduced, skipRowWalk, onCursorSeq]);
+
+  if (status === "verifying" && skipRowWalk) {
+    const n = verifyProgress?.total ?? totalEventCount ?? events.length;
+    const v = verifyProgress?.verified ?? 0;
+    const pct = n ? Math.min(100, Math.round((v / n) * 100)) : 0;
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
+        <span className="h-8 w-8 animate-spin rounded-full border-2 border-accent/30 border-t-accent" />
+        <p className="text-[14px] font-medium text-primary">
+          {verifyProgress?.label || "Verifying on server…"}
+        </p>
+        <p className="font-mono text-[15px] tabular-nums text-accent">
+          {v.toLocaleString()} / {n.toLocaleString()} verified ({pct}%)
+        </p>
+        <p className="max-w-md text-[12.5px] text-secondary">
+          Progress is shown in the bar at the top on every tab. Row animation is
+          skipped for large tenants — only the loaded page is shown below.
+        </p>
+        {onCancelVerify && (
+          <button
+            type="button"
+            onClick={onCancelVerify}
+            className="mt-2 rounded-lg border border-line bg-surface px-4 py-2 text-[13px] font-medium text-primary hover:bg-surface-2"
+          >
+            Cancel verify
+          </button>
+        )}
+      </div>
+    );
+  }
 
   if (events.length === 0) {
     return (

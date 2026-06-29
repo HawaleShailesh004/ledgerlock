@@ -8,7 +8,18 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "seed": "node scripts/seed.mjs"
+    "seed": "node scripts/seed.mjs",
+    "seed-scale": "node scripts/seed-scale.mjs scale-test 10000",
+    "seed-100k": "node scripts/seed-scale.mjs scale-100k 100000",
+    "integration-demo": "node scripts/integration-demo.mjs",
+    "test:merkle": "node scripts/test-merkle-proof.mjs",
+    "test:verify-seal": "node scripts/test-verify-since-seal.mjs",
+    "test:tamper-stats": "node scripts/test-tamper-stats.mjs",
+    "bench:verify": "node scripts/bench-verify.mjs",
+    "export-ledger": "node scripts/export-ledger.mjs",
+    "verify-export": "node scripts/verify-export.mjs",
+    "backfill-worm": "node scripts/backfill-worm.mjs",
+    "trigger-checkpoint": "node scripts/trigger-checkpoint.mjs"
   },
   "keywords": [],
   "author": "",
@@ -16,6 +27,7 @@
   "description": "",
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.1075.0",
+    "@aws-sdk/client-lambda": "^3.1075.0",
     "@aws-sdk/client-s3": "^3.1075.0",
     "@aws-sdk/lib-dynamodb": "^3.1075.0",
     "@tailwindcss/postcss": "^4.3.1",

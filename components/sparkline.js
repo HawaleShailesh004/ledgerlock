@@ -12,7 +12,8 @@ export default function Sparkline({
   strokeWidth = 1.6,
 }) {
   const id = useId();
-  if (!data.length) return <svg width={width} height={height} aria-hidden="true" />;
+  if (!data.length)
+    return <svg width={width} height={height} aria-hidden="true" />;
 
   const max = Math.max(...data, 1);
   const min = Math.min(...data, 0);

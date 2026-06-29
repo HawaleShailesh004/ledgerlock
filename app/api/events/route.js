@@ -1,22 +1,10 @@
 import { appendEvent } from "@/lib/append";
-import { QueryCommand } from "@aws-sdk/lib-dynamodb";
-import { ddb, TABLE } from "@/lib/ddb";
-import { sealCheckpoint, CHECKPOINT_INTERVAL } from "@/lib/checkpoint";
+import { queryEventsPage, queryEventsFromSeq } from "@/lib/events";
 
 export async function POST(req) {
   const body = await req.json();
   try {
     const r = await appendEvent(body);
-    // When the event count crosses a checkpoint interval, seal a fresh WORM root.
-    if ((r.seq + 1) % CHECKPOINT_INTERVAL === 0) {
-      const all = await ddb.send(new QueryCommand({
-        TableName: TABLE,
-        KeyConditionExpression: "PK = :pk AND begins_with(SK, :p)",
-        ExpressionAttributeValues: { ":pk": `TENANT#${body.tenantId}`, ":p": "EVENT#" },
-        ScanIndexForward: true,
-      }));
-      await sealCheckpoint(body.tenantId, all.Items);
-    }
     return Response.json({ ok: true, ...r });
   } catch (e) {
     const status = e.code === 409 ? 409 : 500;
@@ -24,13 +12,46 @@ export async function POST(req) {
   }
 }
 
+function decodeAfterKey(raw) {
+  if (!raw) return undefined;
+  try {
+    return JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+function encodeAfterKey(key) {
+  if (!key) return null;
+  return Buffer.from(JSON.stringify(key)).toString("base64url");
+}
+
 export async function GET(req) {
-  const tenantId = new URL(req.url).searchParams.get("tenantId");
-  const res = await ddb.send(new QueryCommand({
-    TableName: TABLE,
-    KeyConditionExpression: "PK = :pk AND begins_with(SK, :p)",
-    ExpressionAttributeValues: { ":pk": `TENANT#${tenantId}`, ":p": "EVENT#" },
-    ScanIndexForward: true,
-  }));
-  return Response.json({ items: res.Items });
+  const url = new URL(req.url);
+  const tenantId = url.searchParams.get("tenantId");
+  if (!tenantId) {
+    return Response.json({ error: "tenantId required" }, { status: 400 });
+  }
+
+  const limit = Number(url.searchParams.get("limit") || 500);
+  const fromSeqRaw = url.searchParams.get("fromSeq");
+  const order = url.searchParams.get("order") || "asc";
+  const afterKey = decodeAfterKey(url.searchParams.get("afterKey"));
+
+  let page;
+  if (fromSeqRaw != null && fromSeqRaw !== "") {
+    page = await queryEventsFromSeq(tenantId, Number(fromSeqRaw), limit);
+  } else {
+    page = await queryEventsPage(tenantId, {
+      limit,
+      afterKey,
+      ascending: order !== "desc",
+    });
+  }
+
+  return Response.json({
+    items: page.items,
+    nextKey: encodeAfterKey(page.nextKey),
+    hasMore: Boolean(page.nextKey),
+  });
 }
