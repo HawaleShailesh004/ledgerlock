@@ -24,3 +24,13 @@ checkpoint*.json
 .DS_Store
 Thumbs.db
 *.log
+
+# Internal planning & submission docs (local only — not published)
+LedgerLock_Build_Plan.md
+LedgerLock_Devpost_Submission_FINAL.md
+LedgerLock_Phase_By_Phase_Build_Guide.md
+LedgerLock_devto_article_FINAL.md
+frontend-implementation.md
+
+# Root copy — canonical diagram lives in public/
+architecture-diagram.svg

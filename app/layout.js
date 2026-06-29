@@ -34,8 +34,12 @@ export default function RootLayout({ children }) {
     <html
       lang="en"
       className={`${geist.variable} ${plexMono.variable} h-full bg-canvas antialiased`}
+      suppressHydrationWarning
     >
-      <body className="h-full bg-canvas font-sans text-primary">
+      <body
+        className="h-full bg-canvas font-sans text-primary"
+        suppressHydrationWarning
+      >
         {children}
       </body>
     </html>

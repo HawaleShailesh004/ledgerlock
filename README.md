@@ -12,7 +12,7 @@ Live: https://ledgerlock-vert.vercel.app
 
 Most "immutable" audit logs are a normal table plus a promise. LedgerLock enforces immutability at the data layer, on a single DynamoDB table, with four guarantees:
 
-1. **Append-only by permission, not policy.** Every write is `PutItem` with `ConditionExpression: attribute_not_exists(SK)`. The app's IAM role has **only** `PutItem` + `Query` — no `UpdateItem`, no `DeleteItem`. You can't misuse a capability you were never granted.
+1. **Append-only by permission, not policy.** Every write is `PutItem` with `ConditionExpression: attribute_not_exists(SK)`. The app's IAM user has **only** `PutItem` + `Query` — no `UpdateItem`, no `DeleteItem`. You can't misuse a capability you were never granted.
 2. **SHA-256 hash chain.** `hash = SHA256(canonical(event) + prevHash)`. Altering any record breaks every record after it.
 3. **WORM-sealed Merkle checkpoints.** DynamoDB Streams → Lambda → S3 Object Lock (COMPLIANCE). Every **10 events** a Merkle root is sealed into write-once storage — so a tampering admin who rewrites the live chain still can't match the sealed root.
 4. **Bounded, portable proof.** Verification trusts the newest sealed root and walks only the tail since that seal (`O(tail)`, not `O(n)`). Any record produces an `O(log n)` Merkle **inclusion proof** a regulator can verify **offline**, with no access to the app or AWS.
@@ -28,7 +28,7 @@ Most "immutable" audit logs are a normal table plus a promise. LedgerLock enforc
 
 ## Architecture
 
-See `architecture-diagram (1).svg` and `LedgerLock_Devpost_Submission_FINAL.md` for multi-region reads and retention lifecycle.
+See [`public/architecture-diagram (1).svg`](public/architecture-diagram%20(1).svg) for the system diagram.
 
 ```
 SaaS app ── LedgerLockClient.appendEvent() ──▶ Next.js API (Vercel) ──▶ DynamoDB single table
@@ -36,7 +36,7 @@ SaaS app ── LedgerLockClient.appendEvent() ──▶ Next.js API (Vercel) �
                                               GET  /api/proof (Merkle inclusion)           ▼
                                               GET  /api/alerts (sparse GSI)         Lambda checkpointer
                                                                                        Merkle root / 10
-   app IAM role: ✓ PutItem ✓ Query ✗ Update ✗ Delete                                         ▼
+   app IAM user: ✓ PutItem ✓ Query ✗ Update ✗ Delete                                         ▼
                                                                                     S3 Object Lock (COMPLIANCE)
 ```
 
@@ -112,15 +112,6 @@ node scripts/verify-export.mjs export-acme.json
 ## Stack
 
 Amazon DynamoDB (single-table, Streams) · AWS Lambda · Amazon S3 Object Lock · AWS IAM · Next.js · Vercel · Node.js
-
-## Submission assets (in repo)
-
-| File | Purpose |
-|---|---|
-| `LedgerLock_Devpost_Submission_FINAL.md` | Devpost copy-paste package |
-| `LedgerLock_devto_article_FINAL.md` | Bonus dev.to article |
-| `architecture-diagram (1).svg` | Architecture diagram |
-| `LedgerLock_Phase_By_Phase_Build_Guide.md` | Build guide (internal reference) |
 
 ---
 

@@ -71,7 +71,18 @@ function Collapsible({ title, defaultOpen = false, badge, children }) {
   );
 }
 
-export default function Inspector({ event, recompute, worm, proof, onCopy, onClose }) {
+export default function Inspector({
+  event,
+  recompute,
+  recomputeLoading = false,
+  chainStatus = "idle",
+  brokenSeq = null,
+  verifyBreak = null,
+  worm,
+  proof,
+  onCopy,
+  onClose,
+}) {
   useEffect(() => {
     if (!event) return;
     const onKey = (e) => e.key === "Escape" && onClose?.();
@@ -82,7 +93,47 @@ export default function Inspector({ event, recompute, worm, proof, onCopy, onClo
   if (!event) return null;
 
   const meta = actionMeta(event.action);
-  const mismatch = recompute && !recompute.match;
+  const isBreachRow = chainStatus === "tamper" && brokenSeq === event.seq;
+  const isDownstream =
+    chainStatus === "tamper" && brokenSeq != null && event.seq > brokenSeq;
+  const breakFailed =
+    verifyBreak &&
+    (verifyBreak.hashOk === false ||
+      verifyBreak.linkOk === false ||
+      verifyBreak.seqOk === false);
+  const mismatch =
+    isBreachRow ||
+    breakFailed ||
+    (recompute != null && !recompute.match);
+  const tamperVisual = mismatch || isDownstream;
+
+  let proofBadge = null;
+  if (recomputeLoading) {
+    proofBadge = (
+      <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-muted">
+        <span className="h-2.5 w-2.5 animate-spin rounded-full border-[1.5px] border-muted/40 border-t-muted" />
+        Checking
+      </span>
+    );
+  } else if (mismatch) {
+    proofBadge = (
+      <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-tamper-weak px-2 py-0.5 text-[11px] font-medium text-tamper">
+        <BreakGlyph width={11} height={11} /> Mismatch
+      </span>
+    );
+  } else if (isDownstream) {
+    proofBadge = (
+      <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-tamper-weak px-2 py-0.5 text-[11px] font-medium text-tamper">
+        <BreakGlyph width={11} height={11} /> Chain broken
+      </span>
+    );
+  } else if (recompute?.match) {
+    proofBadge = (
+      <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-verified-weak px-2 py-0.5 text-[11px] font-medium text-verified">
+        <CheckTick width={11} height={11} /> Match
+      </span>
+    );
+  }
 
   return (
     <div
@@ -97,7 +148,14 @@ export default function Inspector({ event, recompute, worm, proof, onCopy, onClo
         aria-hidden="true"
       />
 
-      <aside className="animate-drawer relative flex h-full w-full max-w-[420px] flex-col overflow-hidden rounded-none border-l border-line bg-surface shadow-pop sm:max-h-[calc(100vh-2rem)] sm:rounded-2xl sm:border">
+      <aside
+        className={`animate-drawer relative flex h-full w-full max-w-[420px] flex-col overflow-hidden rounded-none border-l bg-surface shadow-pop sm:max-h-[calc(100vh-2rem)] sm:rounded-2xl sm:border ${
+          tamperVisual ? "border-tamper/40" : "border-line"
+        }`}
+      >
+        {tamperVisual && (
+          <span className="absolute inset-y-0 left-0 w-[3px] bg-tamper" />
+        )}
         <div className="flex items-start justify-between border-b border-line px-6 py-5">
           <div>
             <div className="font-mono text-[12px] text-muted">
@@ -125,15 +183,25 @@ export default function Inspector({ event, recompute, worm, proof, onCopy, onClo
             <div className="flex items-start gap-2 rounded-lg border border-tamper/30 bg-tamper-weak px-3 py-2.5">
               <BreakGlyph className="mt-0.5 text-tamper" width={15} height={15} />
               <p className="text-[12.5px] leading-snug text-tamper">
-                This record was altered after it was sealed. The recomputed hash
-                no longer matches the stored value.
+                {isBreachRow || breakFailed
+                  ? "This record was altered after it was sealed. The recomputed hash no longer matches the stored value."
+                  : "Verification failed on this record — the stored hash cannot be trusted."}
+              </p>
+            </div>
+          )}
+          {isDownstream && !mismatch && (
+            <div className="flex items-start gap-2 rounded-lg border border-tamper/30 bg-tamper-weak px-3 py-2.5">
+              <BreakGlyph className="mt-0.5 text-tamper" width={15} height={15} />
+              <p className="text-[12.5px] leading-snug text-tamper">
+                This record sits after the breach at {seqLabel(brokenSeq)}. The
+                hash chain is broken even if this row was not edited directly.
               </p>
             </div>
           )}
 
           <div className="grid grid-cols-2 gap-4">
             <Field label="Actor">
-              <span className={mismatch ? "text-tamper" : ""}>
+              <span className={tamperVisual ? "text-tamper" : ""}>
                 {actorName(event.actor)}
               </span>
               <div className="text-[11.5px] text-muted">{event.actor}</div>
@@ -151,20 +219,8 @@ export default function Inspector({ event, recompute, worm, proof, onCopy, onClo
 
           <Collapsible
             title="Cryptographic proof"
-            defaultOpen={mismatch}
-            badge={
-              recompute ? (
-                recompute.match ? (
-                  <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-verified-weak px-2 py-0.5 text-[11px] font-medium text-verified">
-                    <CheckTick width={11} height={11} /> Match
-                  </span>
-                ) : (
-                  <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-tamper-weak px-2 py-0.5 text-[11px] font-medium text-tamper">
-                    <BreakGlyph width={11} height={11} /> Mismatch
-                  </span>
-                )
-              ) : null
-            }
+            defaultOpen={tamperVisual}
+            badge={proofBadge}
           >
             <div className="space-y-3">
               <div>
@@ -179,6 +235,11 @@ export default function Inspector({ event, recompute, worm, proof, onCopy, onClo
                 </div>
                 <HashLine value={event.hash} onCopy={onCopy} />
               </div>
+              {recomputeLoading && !recompute && (
+                <p className="text-[12px] text-secondary">
+                  Recomputing hash from the live chain prefix…
+                </p>
+              )}
               {recompute && (
                 <div>
                   <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted">
@@ -195,6 +256,12 @@ export default function Inspector({ event, recompute, worm, proof, onCopy, onClo
                       : "Recomputed value differs from the stored hash — this record cannot be trusted."}
                   </p>
                 </div>
+              )}
+              {mismatch && !recompute && !recomputeLoading && (
+                <p className="text-[12.5px] text-tamper">
+                  Verification already flagged this record as tampered. Recomputed
+                  hash details could not be loaded.
+                </p>
               )}
             </div>
           </Collapsible>

@@ -9,6 +9,8 @@
     "start": "next start",
     "lint": "next lint",
     "seed": "node scripts/seed.mjs",
+    "reseed-acme": "node scripts/reseed-tenant.mjs acme --use-aws-profile",
+    "reseed-tenant": "node scripts/reseed-tenant.mjs",
     "seed-scale": "node scripts/seed-scale.mjs scale-test 10000",
     "seed-100k": "node scripts/seed-scale.mjs scale-100k 100000",
     "integration-demo": "node scripts/integration-demo.mjs",

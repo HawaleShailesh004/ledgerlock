@@ -91,6 +91,7 @@ export default function DashboardPage() {
   const [verifyProgress, setVerifyProgress] = useState(null);
   const [selectedSeq, setSelectedSeq] = useState(null);
   const [recompute, setRecompute] = useState(null);
+  const [recomputeLoading, setRecomputeLoading] = useState(false);
   const [worm, setWorm] = useState(null);
   const [newSeq, setNewSeq] = useState(null);
   const [appendOpen, setAppendOpen] = useState(false);
@@ -390,22 +391,37 @@ export default function DashboardPage() {
   const refreshRecompute = useCallback(async (seq) => {
     if (seq == null) {
       setRecompute(null);
+      setRecomputeLoading(false);
       return;
     }
     const tid = tenantRef.current.id;
-    let chain;
     if (demoActive.current) {
-      chain = [...(demoStore.current[tid] || [])];
-    } else {
-      chain = [...eventsRef.current].sort((a, b) => a.seq - b.seq);
-    }
-    const idx = chain.findIndex((e) => e.seq === seq);
-    if (idx < 0) {
-      setRecompute(null);
+      const chain = [...(demoStore.current[tid] || [])];
+      const idx = chain.findIndex((e) => e.seq === seq);
+      if (idx < 0) {
+        setRecompute(null);
+        setRecomputeLoading(false);
+        return;
+      }
+      setRecomputeLoading(true);
+      const rc = await recomputeRow(chain, idx);
+      setRecompute(rc);
+      setRecomputeLoading(false);
       return;
     }
-    const rc = await recomputeRow(chain, idx);
-    setRecompute(rc);
+
+    setRecomputeLoading(true);
+    try {
+      const res = await fetch(
+        `/api/recompute?tenantId=${encodeURIComponent(tid)}&seq=${seq}`,
+      );
+      const data = await res.json().catch(() => null);
+      setRecompute(res.ok && !data?.error ? data : null);
+    } catch {
+      setRecompute(null);
+    } finally {
+      setRecomputeLoading(false);
+    }
   }, []);
 
   const handleSelect = useCallback(
@@ -500,12 +516,22 @@ export default function DashboardPage() {
         new Date().toLocaleTimeString("en-US", { hour12: false }),
       );
 
-      const cp = demoActive.current ? demoCheckpoints.current[tid] : checkpoint;
-      if (cp && res?.liveRootAtBoundary) {
+      const cp =
+        demoActive.current
+          ? demoCheckpoints.current[tid]
+          : res.checkpoint ?? cpPayload?.checkpoint;
+      if (!demoActive.current && cp) setCheckpoint(cp);
+
+      if (
+        cp &&
+        res?.liveRootAtBoundary != null &&
+        res.boundary > 0 &&
+        cp.count === res.boundary
+      ) {
         setWorm({
           liveRoot: res.liveRootAtBoundary,
           checkpointRoot: cp.merkleRoot,
-          checkpointCount: cp.count,
+          checkpointCount: res.boundary,
           match: res.liveRootAtBoundary === cp.merkleRoot,
         });
       } else {
@@ -668,9 +694,28 @@ export default function DashboardPage() {
       return true;
     });
   }, [events, query, actionFilter, flaggedOnly]);
+  const pinnedFiltered = useMemo(() => {
+    if (status !== "tamper" || brokenSeq == null) return filtered;
+    const pinned = [];
+    const rest = [];
+    for (const event of filtered) {
+      if (event.seq >= brokenSeq) pinned.push(event);
+      else rest.push(event);
+    }
+    return [...pinned, ...rest];
+  }, [filtered, status, brokenSeq]);
 
   const displayCount = totalEventCount ?? events.length;
   const selectedEvent = events.find((e) => e.seq === selectedSeq) || null;
+  const selectedVerifyBreak = useMemo(() => {
+    if (selectedSeq == null) return null;
+    const found = verifyResult?.breaks?.find((b) => b.seq === selectedSeq);
+    if (found) return found;
+    if (status === "tamper" && brokenSeq === selectedSeq) {
+      return { seq: selectedSeq, hashOk: false, linkOk: false };
+    }
+    return null;
+  }, [selectedSeq, verifyResult, status, brokenSeq]);
   const checkpointCount = checkpoint?.count ?? null;
   const metrics = useMemo(() => computeMetrics(events), [events]);
   const pageSeqRange = useMemo(() => {
@@ -760,7 +805,7 @@ export default function DashboardPage() {
                 />
 
                 <LedgerList
-                  events={filtered}
+                  events={pinnedFiltered}
                   selectedSeq={selectedSeq}
                   newSeq={newSeq}
                   status={status}
@@ -780,7 +825,7 @@ export default function DashboardPage() {
                   pageSizes={PAGE_SIZE_OPTIONS}
                   totalCount={displayCount}
                   rowCount={events.length}
-                  filteredCount={filtered.length}
+                  filteredCount={pinnedFiltered.length}
                   seqMin={pageSeqRange.min}
                   seqMax={pageSeqRange.max}
                   loading={pageLoading}
@@ -845,6 +890,10 @@ export default function DashboardPage() {
         <Inspector
           event={selectedEvent}
           recompute={recompute}
+          recomputeLoading={recomputeLoading}
+          chainStatus={status}
+          brokenSeq={brokenSeq}
+          verifyBreak={selectedVerifyBreak}
           worm={worm}
           proof={eventProof}
           onCopy={handleCopy}
